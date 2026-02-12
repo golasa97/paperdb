@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paper Search</title>
+<style>
+:root{--bg:#0f0f0f;--bg2:#1a1a1a;--bg3:#252525;--text:#e0e0e0;--muted:#888;--accent:#4a9eff;--accent-dim:#2d5a8a;--border:#333;--ok:#4ade80;--warn:#fbbf24;--danger:#f87171;--green-bg:rgba(34,134,58,.08);--red-bg:rgba(180,35,24,.06)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh}
+.container{max-width:1060px;margin:0 auto;padding:1.5rem}
+button{padding:.6rem 1.1rem;border:none;border-radius:7px;background:var(--accent);color:#fff;font-size:.88rem;font-weight:500;cursor:pointer;transition:background .2s}
+button:hover{background:#3d8ae0}
+button:disabled{opacity:.35;cursor:not-allowed}
+.btn-sm{padding:.35rem .7rem;font-size:.78rem;border-radius:6px}
+.btn-outline{background:0 0;border:1px solid var(--accent);color:var(--accent)}
+.btn-outline:hover{background:var(--accent);color:#fff}
+.btn-green{background:#22863a}.btn-green:hover{background:#2ea043}
+.btn-orange{background:#b45309}.btn-orange:hover{background:#d97706}
+.btn-red{background:#b42318}.btn-red:hover{background:#dc4a3d}
+.btn-ghost{background:0 0;color:var(--accent);padding:.2rem .5rem;font-size:.82rem}
+.btn-ghost:hover{text-decoration:underline;background:0 0}
+input[type=text],input[type=search],select,textarea{padding:.6rem .8rem;border:1px solid var(--border);border-radius:7px;background:var(--bg);color:var(--text);font-size:.9rem}
+input:focus,select:focus,textarea:focus{outline:0;border-color:var(--accent)}
+select{appearance:auto}
+
+/* --- nav --- */
+.nav{display:flex;gap:.25rem;background:var(--bg2);border-radius:10px;padding:.3rem;margin-bottom:1.5rem}
+.nav button{flex:1;background:0 0;color:var(--muted);border-radius:8px;font-size:.9rem}
+.nav button.active{background:var(--bg3);color:var(--text)}
+.tab{display:none}.tab.active{display:block}
+
+/* --- header --- */
+header{text-align:center;margin-bottom:1.25rem}
+h1{font-size:1.8rem;font-weight:600;margin-bottom:.3rem}
+.stats{color:var(--muted);font-size:.85rem}
+
+/* --- search --- */
+.search-box{background:var(--bg2);border-radius:11px;padding:1.2rem;margin-bottom:1.2rem}
+.search-row{display:flex;gap:.5rem;margin-bottom:.7rem;flex-wrap:wrap}
+.search-row input[type=text]{flex:1;min-width:200px}
+.search-opts{display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center}
+.search-opts label{display:flex;align-items:center;gap:.35rem;cursor:pointer;font-size:.88rem}
+.search-opts input[type=radio]{accent-color:var(--accent)}
+.search-opts select{font-size:.82rem;padding:.35rem .5rem}
+
+/* --- results --- */
+.results-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem;color:var(--muted);font-size:.88rem}
+.paper{background:var(--bg2);border-radius:9px;padding:1rem 1.1rem;margin-bottom:.8rem;border:1px solid var(--border);transition:border-color .2s}
+.paper:hover{border-color:var(--accent-dim)}
+.paper-title{font-size:1.02rem;font-weight:500;margin-bottom:.35rem;color:var(--accent);cursor:pointer}
+.paper-title:hover{text-decoration:underline}
+.paper-meta{font-size:.8rem;color:var(--muted);margin-bottom:.5rem}
+.paper-abstract{font-size:.85rem;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.paper-kw{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.5rem}
+.kw{background:var(--bg3);padding:.15rem .4rem;border-radius:4px;font-size:.7rem;color:var(--muted)}
+.paper-actions{display:flex;gap:.5rem;margin-top:.6rem;flex-wrap:wrap;align-items:center}
+.score-badge{background:var(--accent-dim);padding:.15rem .4rem;border-radius:4px;font-size:.7rem;float:right}
+.doc-type-badge{background:var(--bg3);padding:.15rem .4rem;border-radius:4px;font-size:.7rem;color:var(--warn)}
+
+.loading{text-align:center;padding:2rem;color:var(--muted)}
+.no-results{text-align:center;padding:2.5rem;color:var(--muted)}
+
+/* --- slide panel (citations/refs/similar) --- */
+.panel-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1050}
+.panel-backdrop.open{display:block}
+.slide-panel{display:none;position:fixed;top:0;right:0;width:min(920px,100vw);height:100vh;background:var(--bg);border-left:1px solid var(--border);z-index:1100;flex-direction:column;box-shadow:-4px 0 20px rgba(0,0,0,.5)}
+.slide-panel.open{display:flex}
+.sp-header{padding:1rem 1.3rem;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0;position:relative}
+.sp-header h2{font-size:1.05rem;padding-right:2rem}
+.sp-sub{font-size:.78rem;color:var(--muted)}
+.sp-close{position:absolute;top:.8rem;right:.8rem;background:0 0;color:var(--muted);font-size:1.4rem;cursor:pointer;border:none;padding:.2rem .4rem}
+.sp-close:hover{color:var(--text)}
+.sp-toolbar{padding:.6rem 1.3rem;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.sp-toolbar-row{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.4rem}
+.sp-toolbar-row:last-child{margin-bottom:0}
+.sp-toolbar label{font-size:.78rem;color:var(--muted);white-space:nowrap}
+.sp-toolbar select{padding:.3rem .4rem;font-size:.78rem}
+.sp-toolbar input[type=search]{padding:.3rem .5rem;font-size:.82rem;flex:1;min-width:140px}
+.sp-count{font-size:.78rem;color:var(--muted);margin-left:auto}
+.sp-body{flex:1;overflow-y:auto;padding:.8rem 1.3rem}
+.sp-footer{padding:.6rem 1.3rem;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0;display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
+.sp-footer .sel-count{font-size:.78rem;color:var(--muted);margin-left:auto}
+
+.cp{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:.7rem .85rem;margin-bottom:.5rem;display:flex;gap:.6rem;align-items:flex-start;transition:border-color .2s}
+.cp:hover{border-color:var(--accent-dim)}
+.cp.in-db{border-color:#22863a;background:var(--green-bg)}
+.cp.not-in-db{border-color:#b42318;background:var(--red-bg)}
+.cp input[type=checkbox]{accent-color:var(--accent);margin-top:.3rem;flex-shrink:0}
+.cp-content{flex:1;min-width:0}
+.cp-title{font-size:.9rem;font-weight:500;color:var(--accent);margin-bottom:.2rem}
+.cp-title a{color:inherit;text-decoration:none}
+.cp-title a:hover{text-decoration:underline}
+.cp-meta{font-size:.75rem;color:var(--muted)}
+.cp-badges{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.3rem}
+.badge{display:inline-block;padding:.12rem .38rem;border-radius:4px;font-size:.68rem;background:var(--bg3);color:var(--muted)}
+.badge.oa{background:#14532d;color:#4ade80}
+.badge.in-db{background:#14532d;color:#4ade80}
+.badge.not-in-db{background:#451a15;color:#f87171}
+.badge.score{background:var(--accent-dim);color:var(--text)}
+
+/* --- modal --- */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:2000;overflow-y:auto}
+.modal-bg.open{display:block}
+.modal-box{background:var(--bg2);max-width:650px;margin:3rem auto;padding:1.5rem;border-radius:11px;position:relative}
+.modal-box h3{margin-bottom:1rem}
+.modal-x{position:absolute;top:.8rem;right:.8rem;background:0 0;border:none;color:var(--muted);font-size:1.3rem;cursor:pointer}
+.modal-x:hover{color:var(--text)}
+
+/* --- lists tab --- */
+.list-card{background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:1rem;margin-bottom:.7rem;cursor:pointer;transition:border-color .2s}
+.list-card:hover{border-color:var(--accent-dim)}
+.list-card h4{color:var(--accent);margin-bottom:.3rem}
+.list-card .lc-meta{font-size:.8rem;color:var(--muted)}
+
+/* --- import tab --- */
+.dropzone{border:2px dashed var(--border);border-radius:11px;padding:2.5rem;text-align:center;color:var(--muted);cursor:pointer;transition:border-color .2s}
+.dropzone:hover,.dropzone.drag{border-color:var(--accent);color:var(--text)}
+.import-item{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:.8rem 1rem;margin-bottom:.5rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap}
+.import-item .ii-file{flex:1;min-width:180px;font-size:.88rem}
+.import-item .ii-meta{font-size:.78rem;color:var(--muted);flex:2;min-width:200px}
+.conf-bar{padding:.12rem .4rem;border-radius:3px;font-size:.7rem;font-weight:600}
+.conf-high{background:#14532d;color:#4ade80}.conf-med{background:#713f12;color:#fbbf24}.conf-low{background:#451a15;color:#f87171}
+
+/* --- settings tab --- */
+.setting-row{margin-bottom:1rem}
+.setting-row label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:.3rem}
+.setting-row input,.setting-row select{width:100%;max-width:500px}
+
+/* --- toast --- */
+.toast{position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);background:var(--bg3);color:var(--text);padding:.65rem 1.3rem;border-radius:8px;border:1px solid var(--border);font-size:.88rem;z-index:3000;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:.3rem}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:640px){.container{padding:.8rem}.search-row{flex-direction:column}.slide-panel{width:100vw}}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+  <h1>📚 Paper Search</h1>
+  <p class="stats" id="header-stats">
+    {{ stats.total_papers }} papers indexed
+    {% if stats.year_range %} · {{ stats.year_range[0] }}–{{ stats.year_range[1] }}{% endif %}
+    · {{ stats.with_embedding }} with semantic search
+  </p>
+</header>
+
+<nav class="nav" id="main-nav">
+  <button class="active" onclick="switchTab('search')">Search</button>
+  <button onclick="switchTab('lists')">Lists</button>
+  <button onclick="switchTab('import')">Import</button>
+  <button onclick="switchTab('settings')">Settings</button>
+</nav>
+
+<!-- ==================== SEARCH TAB ==================== -->
+<div class="tab active" id="tab-search">
+  <div class="search-box">
+    <div class="search-row">
+      <input type="text" id="q" placeholder="Search papers…" autofocus>
+      <button onclick="doSearch()">Search</button>
+    </div>
+    <div class="search-opts">
+      <label><input type="radio" name="stype" value="keyword" checked> Keyword</label>
+      {% if embeddings_available %}
+      <label><input type="radio" name="stype" value="semantic"> Semantic</label>
+      <label><input type="radio" name="stype" value="hybrid"> Hybrid</label>
+      {% endif %}
+      <select id="doc-type-filter" title="Document type filter">
+        <option value="all">All types</option>
+        <option value="article">Articles</option>
+        <option value="book">Books / Textbooks</option>
+        <option value="techreport">Technical Reports</option>
+        <option value="manual">Manuals</option>
+        <option value="thesis">Theses</option>
+        <option value="presentation">Presentations</option>
+        <option value="inproceedings">Conference Papers</option>
+        <option value="other">Other</option>
+      </select>
+      <button class="btn-sm btn-outline" onclick="runCensus()" title="Scan library for new files">Census</button>
+    </div>
+  </div>
+  <div id="results"></div>
+</div>
+
+<!-- ==================== LISTS TAB ==================== -->
+<div class="tab" id="tab-lists">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h2 style="font-size:1.2rem">My Lists</h2>
+    <button class="btn-sm" onclick="promptNewList()">+ New List</button>
+  </div>
+  <div id="lists-container"><div class="loading">Loading…</div></div>
+</div>
+
+<!-- ==================== IMPORT TAB ==================== -->
+<div class="tab" id="tab-import">
+  <h2 style="font-size:1.2rem;margin-bottom:1rem">Import PDFs</h2>
+  <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()"
+       ondragover="event.preventDefault();this.classList.add('drag')"
+       ondragleave="this.classList.remove('drag')"
+       ondrop="event.preventDefault();this.classList.remove('drag');handleDrop(event)">
+    Drop PDF files here or click to browse
+    <input type="file" id="file-input" accept=".pdf" multiple hidden onchange="handleFiles(this.files)">
+  </div>
+  <div id="import-list" style="margin-top:1rem"></div>
+  <div id="import-actions" style="margin-top:1rem;display:none">
+    <button class="btn-green" onclick="confirmImport()">Import Selected</button>
+    <button class="btn-red btn-sm" onclick="clearImport()">Clear All</button>
+  </div>
+</div>
+
+<!-- ==================== SETTINGS TAB ==================== -->
+<div class="tab" id="tab-settings">
+  <h2 style="font-size:1.2rem;margin-bottom:1rem">Settings</h2>
+
+  <h3 style="font-size:1rem;margin-bottom:.7rem;color:var(--accent)">Embedding Backend</h3>
+  <div class="setting-row">
+    <label>Backend</label>
+    <select id="set-backend" onchange="onBackendChange()">
+      <option value="ollama">Ollama (local, recommended)</option>
+      <option value="sbert">sentence-transformers (local, Python)</option>
+      <option value="openai">OpenAI API (cloud)</option>
+    </select>
+  </div>
+  <div id="backend-ollama-opts">
+    <div class="setting-row">
+      <label>Ollama URL</label>
+      <input type="text" id="set-ollama-url" placeholder="http://localhost:11434">
+    </div>
+    <div class="setting-row">
+      <label>Ollama Model</label>
+      <select id="set-ollama-model">
+        <option value="nomic-embed-text">nomic-embed-text (768d, 274MB, fast)</option>
+        <option value="qwen3-embedding:0.6b">qwen3-embedding:0.6b (1024d, 490MB, fast)</option>
+        <option value="qwen3-embedding:4b">qwen3-embedding:4b (2560d, 2.7GB, good quality)</option>
+        <option value="qwen3-embedding:8b">qwen3-embedding:8b (4096d, 5.2GB, best quality — MTEB #1)</option>
+        <option value="mxbai-embed-large">mxbai-embed-large (1024d, 670MB)</option>
+        <option value="snowflake-arctic-embed">snowflake-arctic-embed (1024d, 670MB)</option>
+        <option value="all-minilm">all-minilm (384d, 46MB, tiny/fast)</option>
+      </select>
+      <p style="font-size:.75rem;color:var(--muted);margin-top:.3rem">Pull with: <code>ollama pull &lt;model-name&gt;</code>. Changing models requires re-embedding.</p>
+    </div>
+  </div>
+  <div id="backend-sbert-opts" style="display:none">
+    <div class="setting-row">
+      <label>Model Name (HuggingFace)</label>
+      <select id="set-sbert-model">
+        <option value="BAAI/bge-large-en-v1.5">BAAI/bge-large-en-v1.5 (1024d, recommended)</option>
+        <option value="BAAI/bge-base-en-v1.5">BAAI/bge-base-en-v1.5 (768d, lighter)</option>
+        <option value="Qwen/Qwen3-Embedding-0.6B">Qwen/Qwen3-Embedding-0.6B (1024d)</option>
+        <option value="Qwen/Qwen3-Embedding-4B">Qwen/Qwen3-Embedding-4B (2560d)</option>
+        <option value="Qwen/Qwen3-Embedding-8B">Qwen/Qwen3-Embedding-8B (4096d, needs GPU)</option>
+      </select>
+      <p style="font-size:.75rem;color:var(--muted);margin-top:.3rem">Downloaded automatically on first use. Changing models requires re-embedding.</p>
+    </div>
+  </div>
+  <div id="backend-openai-opts" style="display:none">
+    <div class="setting-row">
+      <label>OpenAI API Key</label>
+      <input type="text" id="set-openai" placeholder="sk-...">
+    </div>
+    <div class="setting-row">
+      <label>OpenAI Model</label>
+      <input type="text" id="set-openai-model" placeholder="text-embedding-3-small">
+    </div>
+  </div>
+  <div id="backend-status" style="margin-bottom:1rem;font-size:.85rem;color:var(--muted)"></div>
+
+  <h3 style="font-size:1rem;margin:.8rem 0 .7rem;color:var(--accent)">FAISS Vector Index</h3>
+  <div id="faiss-status" style="font-size:.85rem;color:var(--muted);margin-bottom:.7rem"></div>
+  <div style="display:flex;gap:.5rem;margin-bottom:1rem">
+    <button class="btn-sm btn-outline" onclick="rebuildFaiss()">Rebuild Index</button>
+    <button class="btn-sm btn-outline" onclick="reembed(true)">Embed Missing Papers</button>
+    <button class="btn-sm btn-orange" onclick="if(confirm('Re-embed ALL papers? This may take a long time.'))reembed(false)">Re-embed All</button>
+  </div>
+
+  <h3 style="font-size:1rem;margin:.8rem 0 .7rem;color:var(--accent)">General</h3>
+  <div class="setting-row">
+    <label>Email (for CrossRef / OpenAlex polite pool — faster rate limits)</label>
+    <input type="text" id="set-email" placeholder="you@example.com">
+  </div>
+  <div class="setting-row">
+    <label>PDF Base Directory (where your library lives on disk)</label>
+    <input type="text" id="set-pdfdir" placeholder="/path/to/pdfs">
+  </div>
+  <div class="setting-row">
+    <label>Auto-generate embeddings on import</label>
+    <select id="set-autoembed"><option value="yes">Yes</option><option value="no">No</option></select>
+  </div>
+  <div class="setting-row">
+    <label>Default document type for new imports</label>
+    <select id="set-deftype">
+      <option value="article">Article</option><option value="book">Book / Textbook</option>
+      <option value="techreport">Technical Report</option><option value="manual">Manual</option>
+      <option value="thesis">Thesis</option><option value="presentation">Presentation</option>
+      <option value="inproceedings">Conference Paper</option><option value="other">Other</option>
+    </select>
+  </div>
+  <button onclick="saveSettings()">Save Settings</button>
+  <span id="settings-status" style="margin-left:1rem;font-size:.85rem;color:var(--ok)"></span>
+</div>
+</div><!-- /container -->
+
+<!-- ==================== SLIDE PANEL (citations / refs / similar) ==================== -->
+<div class="panel-backdrop" id="sp-backdrop" onclick="closePanel()"></div>
+<div class="slide-panel" id="sp-panel">
+  <div class="sp-header">
+    <button class="sp-close" onclick="closePanel()">×</button>
+    <h2 id="sp-title">Panel</h2>
+    <div class="sp-sub" id="sp-sub"></div>
+  </div>
+  <div class="sp-toolbar">
+    <div class="sp-toolbar-row">
+      <label>Sort:</label>
+      <select id="sp-sort" onchange="renderPanel()">
+        <option value="year-desc">Year (newest)</option><option value="year-asc">Year (oldest)</option>
+        <option value="cited_by-desc">Cited by (most)</option><option value="cited_by-asc">Cited by (least)</option>
+        <option value="refs-desc">Refs (most)</option><option value="refs-asc">Refs (least)</option>
+        <option value="author-asc">Author A→Z</option><option value="author-desc">Author Z→A</option>
+        <option value="title-asc">Title A→Z</option><option value="title-desc">Title Z→A</option>
+        <option value="journal-asc">Journal A→Z</option><option value="journal-desc">Journal Z→A</option>
+        <option value="indb-desc">In library first</option><option value="indb-asc">Not in library first</option>
+        <option value="score-desc">Similarity (highest)</option>
+      </select>
+      <span class="sp-count" id="sp-count"></span>
+    </div>
+    <div class="sp-toolbar-row">
+      <input type="search" id="sp-filter" placeholder="Filter by keyword, author, title, journal…" oninput="renderPanel()">
+    </div>
+  </div>
+  <div class="sp-body" id="sp-body"></div>
+  <div class="sp-footer">
+    <button class="btn-sm btn-outline" onclick="spSelectAll()">Select all</button>
+    <button class="btn-sm btn-outline" onclick="spDeselectAll()">Deselect</button>
+    <button class="btn-sm btn-outline" style="border-color:#22863a;color:#4ade80" onclick="spSelectByDb(true)">In DB</button>
+    <button class="btn-sm btn-outline" style="border-color:#b42318;color:#f87171" onclick="spSelectByDb(false)">Not in DB</button>
+    <button class="btn-sm btn-green" onclick="spExportDois()">Export DOIs</button>
+    <button class="btn-sm btn-outline" onclick="spAddToList()">Add to list</button>
+    <span class="sel-count" id="sp-sel"></span>
+  </div>
+</div>
+
+<!-- ==================== MODALS ==================== -->
+
+<!-- Paper detail modal -->
+<div class="modal-bg" id="m-paper" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-box"><button class="modal-x" onclick="closeM('m-paper')">×</button><div id="m-paper-body"></div></div>
+</div>
+
+<!-- Add-to-list modal -->
+<div class="modal-bg" id="m-addlist" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-box">
+  <button class="modal-x" onclick="closeM('m-addlist')">×</button>
+  <h3>Add to List</h3>
+  <div id="al-lists"></div>
+  <div style="margin-top:1rem;display:flex;gap:.5rem">
+    <input type="text" id="al-new-name" placeholder="New list name…" style="flex:1">
+    <button class="btn-sm" onclick="alCreateAndAdd()">Create & Add</button>
+  </div>
+</div>
+</div>
+
+<!-- Export DOIs modal -->
+<div class="modal-bg" id="m-export" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-box">
+  <button class="modal-x" onclick="closeM('m-export')">×</button>
+  <h3>Export DOIs</h3>
+  <p style="font-size:.85rem;color:var(--muted);margin-bottom:.7rem" id="export-count"></p>
+  <div style="margin-bottom:.7rem">
+    <label style="font-size:.85rem;color:var(--muted)">Filename:</label>
+    <input type="text" id="export-fname" value="dois.txt" style="width:100%;margin-top:.3rem">
+  </div>
+  <textarea id="export-preview" rows="6" readonly style="width:100%;background:var(--bg);color:var(--text);font-size:.8rem;border:1px solid var(--border);border-radius:6px;padding:.5rem;margin-bottom:.7rem"></textarea>
+  <div style="display:flex;gap:.5rem">
+    <button onclick="doExportDownload()">Download File</button>
+    <button class="btn-outline" onclick="doExportClipboard()">Copy to Clipboard</button>
+  </div>
+</div>
+</div>
+
+<!-- Delete confirm modal -->
+<div class="modal-bg" id="m-delete" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-box">
+  <button class="modal-x" onclick="closeM('m-delete')">×</button>
+  <h3 style="color:var(--danger)">Delete Paper</h3>
+  <p style="margin:.8rem 0" id="del-msg"></p>
+  <div style="display:flex;gap:.5rem">
+    <button class="btn-red" id="del-confirm-btn">Delete permanently</button>
+    <button class="btn-outline" onclick="closeM('m-delete')">Cancel</button>
+  </div>
+</div>
+</div>
+
+<!-- Census modal -->
+<div class="modal-bg" id="m-census" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-box" style="max-width:750px">
+  <button class="modal-x" onclick="closeM('m-census')">×</button>
+  <h3>Library Census</h3>
+  <div id="census-body"><div class="loading"><span class="spinner"></span> Scanning…</div></div>
+</div>
+</div>
+
+<!-- List detail modal -->
+<div class="modal-bg" id="m-listdetail" onclick="if(event.target===this)this.classList.remove('open')">
+<div class="modal-box" style="max-width:800px;max-height:80vh;display:flex;flex-direction:column">
+  <button class="modal-x" onclick="closeM('m-listdetail')">×</button>
+  <div id="ld-body" style="overflow-y:auto"></div>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ STATE ============ */
+let panelData=[], panelSelected=new Set(), panelDbStatus={}, panelMode='';
+let addListDois=[]; // DOIs to add to a list
+let importResults=[]; // resolved import items
+
+/* ============ UTIL ============ */
+function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800)}
+function openM(id){document.getElementById(id).classList.add('open')}
+function closeM(id){document.getElementById(id).classList.remove('open')}
+async function jpost(url,body){return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+async function jput(url,body){return fetch(url,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
+async function jdel(url,body){return fetch(url,{method:'DELETE',headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined})}
+
+/* ============ TABS ============ */
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  document.querySelectorAll('.nav button').forEach((b,i)=>{
+    b.classList.toggle('active',b.textContent.trim().toLowerCase()===name)});
+  if(name==='lists') loadLists();
+  if(name==='settings') loadSettings();
+}
+
+/* ============ SEARCH ============ */
+document.getElementById('q').addEventListener('keypress',e=>{if(e.key==='Enter')doSearch()});
+
+async function doSearch(){
+  const q=document.getElementById('q').value.trim();
+  if(!q)return;
+  const st=document.querySelector('input[name=stype]:checked').value;
+  const dt=document.getElementById('doc-type-filter').value;
+  const r=document.getElementById('results');
+  r.innerHTML='<div class="loading"><span class="spinner"></span> Searching…</div>';
+  try{
+    const res=await(await fetch(`/search?q=${encodeURIComponent(q)}&type=${st}&doc_type=${dt}`)).json();
+    showResults(res);
+  }catch(e){r.innerHTML='<div class="no-results">Search error.</div>'}
+}
+
+function showResults(data){
+  const r=document.getElementById('results');
+  if(!data.results||!data.results.length){r.innerHTML='<div class="no-results">No results found</div>';return}
+  let h=`<div class="results-header"><span>${data.count} results for "${esc(data.query)}"</span><span>${data.type}</span></div>`;
+  for(const p of data.results){
+    const au=(p.authors||[]).slice(0,3).map(a=>esc(a)).join(', ')+(p.authors&&p.authors.length>3?' et al.':'');
+    const d=esc(p.doi);
+    h+=`<div class="paper">
+      ${p.score?`<span class="score-badge">Score: ${p.score.toFixed(3)}</span>`:''}
+      ${p.doc_type&&p.doc_type!=='article'?`<span class="doc-type-badge">${esc(p.doc_type)}</span>`:''}
+      <div class="paper-title" onclick="showPaper('${d}')">${esc(p.title)||'Untitled'}</div>
+      <div class="paper-meta">${au}<br>${p.journal?esc(p.journal):''}${p.journal&&p.year?' · ':''}${p.year||''}</div>
+      ${p.abstract?`<div class="paper-abstract">${esc(p.abstract)}</div>`:''}
+      ${p.keywords&&p.keywords.length?`<div class="paper-kw">${p.keywords.slice(0,5).map(k=>`<span class="kw">${esc(k)}</span>`).join('')}</div>`:''}
+      <div class="paper-actions">
+        <a href="https://doi.org/${encodeURIComponent(p.doi)}" target="_blank" class="btn-ghost">DOI↗</a>
+        <a href="/pdf/${p.doi}" target="_blank" class="btn-ghost">PDF↗</a>
+        <button class="btn-sm btn-outline" onclick="openCiting('${d}','${esc(p.title)}')">Citing</button>
+        <button class="btn-sm btn-outline" onclick="openRefs('${d}','${esc(p.title)}')">References</button>
+        <button class="btn-sm btn-outline" onclick="openSimilar('${d}','${esc(p.title)}')">Similar</button>
+        <button class="btn-sm btn-outline" onclick="promptAddToList(['${d}'])">+ List</button>
+        <button class="btn-sm btn-red" onclick="promptDelete('${d}','${esc(p.title)}')">Delete</button>
+      </div>
+    </div>`}
+  r.innerHTML=h;
+}
+
+/* ============ PAPER DETAIL ============ */
+async function showPaper(doi){
+  openM('m-paper');
+  const b=document.getElementById('m-paper-body');
+  b.innerHTML='<div class="loading">Loading…</div>';
+  try{
+    const p=await(await fetch(`/paper/${doi}`)).json();
+    const au=(p.authors||[]).map(a=>esc(a)).join(', ');
+    b.innerHTML=`
+      <h2 style="color:var(--accent);margin-bottom:.8rem">${esc(p.title)||'Untitled'}</h2>
+      <p style="color:var(--muted);margin-bottom:.3rem">${au}</p>
+      <p style="color:var(--muted);margin-bottom:.3rem">${esc(p.journal)||''} ${p.year?'('+p.year+')':''}${p.doc_type&&p.doc_type!=='article'?' · <span style="color:var(--warn)">'+esc(p.doc_type)+'</span>':''}</p>
+      ${p.abstract?'<h4 style="margin:1rem 0 .4rem">Abstract</h4><p style="white-space:pre-wrap;line-height:1.6;font-size:.9rem">'+esc(p.abstract)+'</p>':''}
+      ${p.keywords&&p.keywords.length?'<div class="paper-kw" style="margin-top:.8rem">'+p.keywords.map(k=>'<span class="kw">'+esc(k)+'</span>').join('')+'</div>':''}
+      <div style="margin-top:1.2rem;display:flex;gap:.6rem;flex-wrap:wrap">
+        <a href="https://doi.org/${encodeURIComponent(p.doi)}" target="_blank" class="btn-ghost">Publisher↗</a>
+        <a href="/pdf/${p.doi}" target="_blank" class="btn-ghost">PDF↗</a>
+        <button class="btn-sm btn-outline" onclick="closeM('m-paper');openCiting('${esc(p.doi)}','${esc(p.title)}')">Citing</button>
+        <button class="btn-sm btn-outline" onclick="closeM('m-paper');openRefs('${esc(p.doi)}','${esc(p.title)}')">References</button>
+        <button class="btn-sm btn-outline" onclick="closeM('m-paper');openSimilar('${esc(p.doi)}','${esc(p.title)}')">Similar</button>
+        <button class="btn-sm btn-outline" onclick="promptAddToList(['${esc(p.doi)}'])">+ List</button>
+      </div>
+      <div style="margin-top:.8rem">
+        <label style="font-size:.8rem;color:var(--muted)">Type:</label>
+        <select onchange="updatePaperType('${esc(p.doi)}',this.value)" style="font-size:.8rem;padding:.2rem .4rem">
+          ${['article','book','techreport','manual','thesis','presentation','inproceedings','other'].map(t=>`<option ${t===p.doc_type?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>`;
+  }catch(e){b.innerHTML='<div class="no-results">Error loading paper.</div>'}
+}
+
+async function updatePaperType(doi,t){
+  await fetch(`/api/paper/${doi}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({doc_type:t})});
+  toast('Type updated');
+}
+
+/* ============ DELETE ============ */
+function promptDelete(doi,title){
+  document.getElementById('del-msg').textContent=`Are you sure you want to delete "${title||doi}" from the database? This cannot be undone.`;
+  const btn=document.getElementById('del-confirm-btn');
+  btn.onclick=async()=>{
+    await jdel(`/api/paper/${doi}`);
+    closeM('m-delete');
+    toast('Paper deleted');
+    doSearch();
+  };
+  openM('m-delete');
+}
+
+/* ============ SLIDE PANEL (shared for citing / refs / similar) ============ */
+function openPanel(){
+  document.getElementById('sp-panel').classList.add('open');
+  document.getElementById('sp-backdrop').classList.add('open');
+}
+function closePanel(){
+  document.getElementById('sp-panel').classList.remove('open');
+  document.getElementById('sp-backdrop').classList.remove('open');
+}
+
+async function openCiting(doi,title){
+  panelData=[];panelSelected=new Set();panelDbStatus={};panelMode='citing';
+  openPanel();
+  document.getElementById('sp-title').textContent='Citing: '+(title||doi);
+  document.getElementById('sp-sub').textContent='Loading…';
+  document.getElementById('sp-body').innerHTML='<div class="loading"><span class="spinner"></span> Fetching citations from OpenAlex…</div>';
+  document.getElementById('sp-filter').value='';
+  document.getElementById('sp-sort').value='year-desc';
+  try{
+    const d=await(await fetch(`/citations/${doi}`)).json();
+    panelData=d.results||[];
+    if(!panelData.length){document.getElementById('sp-body').innerHTML='<div class="no-results">No citing papers found.</div>';document.getElementById('sp-sub').textContent=`DOI: ${doi} · 0 citations`;return}
+    await checkDbStatus();
+    const inDb=panelData.filter(p=>p.in_database).length;
+    document.getElementById('sp-sub').textContent=`DOI: ${doi} · ${d.total_count} total · ${panelData.length} loaded · ${inDb} in library`;
+    renderPanel();
+  }catch(e){document.getElementById('sp-body').innerHTML='<div class="no-results">Error fetching citations.</div>'}
+}
+
+async function openRefs(doi,title){
+  panelData=[];panelSelected=new Set();panelDbStatus={};panelMode='refs';
+  openPanel();
+  document.getElementById('sp-title').textContent='References of: '+(title||doi);
+  document.getElementById('sp-sub').textContent='Loading…';
+  document.getElementById('sp-body').innerHTML='<div class="loading"><span class="spinner"></span> Fetching references from OpenAlex…</div>';
+  document.getElementById('sp-filter').value='';
+  document.getElementById('sp-sort').value='year-desc';
+  try{
+    const d=await(await fetch(`/references/${doi}`)).json();
+    panelData=d.results||[];
+    if(!panelData.length){document.getElementById('sp-body').innerHTML='<div class="no-results">No references found.</div>';document.getElementById('sp-sub').textContent=`DOI: ${doi} · 0 references`;return}
+    await checkDbStatus();
+    const inDb=panelData.filter(p=>p.in_database).length;
+    document.getElementById('sp-sub').textContent=`DOI: ${doi} · ${d.total_count} total · ${panelData.length} loaded · ${inDb} in library`;
+    renderPanel();
+  }catch(e){document.getElementById('sp-body').innerHTML='<div class="no-results">Error fetching references.</div>'}
+}
+
+async function openSimilar(doi,title){
+  panelData=[];panelSelected=new Set();panelDbStatus={};panelMode='similar';
+  openPanel();
+  document.getElementById('sp-title').textContent='Similar to: '+(title||doi);
+  document.getElementById('sp-sub').textContent='Loading…';
+  document.getElementById('sp-body').innerHTML='<div class="loading"><span class="spinner"></span> Finding similar papers…</div>';
+  document.getElementById('sp-filter').value='';
+  document.getElementById('sp-sort').value='score-desc';
+  try{
+    const d=await(await fetch(`/api/similar/${doi}`)).json();
+    panelData=(d.results||[]).map(p=>({...p,in_database:true,cited_by_count:null,referenced_works_count:null}));
+    if(!panelData.length){document.getElementById('sp-body').innerHTML='<div class="no-results">No similar papers found (embedding may be missing).</div>';return}
+    document.getElementById('sp-sub').textContent=`${panelData.length} similar papers`;
+    renderPanel();
+  }catch(e){document.getElementById('sp-body').innerHTML='<div class="no-results">Error.</div>'}
+}
+
+async function checkDbStatus(){
+  const dois=panelData.map(p=>p.doi).filter(Boolean);
+  if(!dois.length)return;
+  try{
+    const r=await(await jpost('/api/check-dois',{dois})).json();
+    panelDbStatus=r.results||{};
+  }catch(e){panelDbStatus={}}
+  for(const p of panelData) p.in_database=p.doi?(panelDbStatus[p.doi]||false):false;
+}
+
+function getFiltered(){
+  const f=document.getElementById('sp-filter').value.trim().toLowerCase();
+  const sv=document.getElementById('sp-sort').value;
+  let list=panelData;
+  if(f) list=list.filter(p=>[p.title,(p.authors||[]).join(' '),p.journal,p.doi,p.abstract].filter(Boolean).join(' ').toLowerCase().includes(f));
+  const[field,dir]=sv.split('-');
+  const asc=dir==='asc'?1:-1;
+  list=[...list].sort((a,b)=>{
+    let va,vb;
+    switch(field){
+      case'year':va=a.year||0;vb=b.year||0;return(va-vb)*asc;
+      case'cited_by':va=a.cited_by_count||0;vb=b.cited_by_count||0;return(va-vb)*asc;
+      case'refs':va=a.referenced_works_count||0;vb=b.referenced_works_count||0;return(va-vb)*asc;
+      case'author':va=(a.authors&&a.authors[0])||'';vb=(b.authors&&b.authors[0])||'';return va.localeCompare(vb)*asc;
+      case'title':va=a.title||'';vb=b.title||'';return va.localeCompare(vb)*asc;
+      case'journal':va=a.journal||'';vb=b.journal||'';return va.localeCompare(vb)*asc;
+      case'indb':va=a.in_database?1:0;vb=b.in_database?1:0;return(va-vb)*asc;
+      case'score':va=a.score||0;vb=b.score||0;return(va-vb)*asc;
+      default:return 0;
+    }
+  });
+  return list;
+}
+
+function renderPanel(){
+  const list=getFiltered();
+  const body=document.getElementById('sp-body');
+  document.getElementById('sp-count').textContent=`${list.length} / ${panelData.length}`;
+  document.getElementById('sp-sel').textContent=`${panelSelected.size} selected`;
+  if(!list.length){body.innerHTML='<div class="no-results">No matches.</div>';return}
+  const parts=[];
+  for(const p of list){
+    const doi=p.doi||'';
+    const chk=panelSelected.has(doi)?'checked':'';
+    const au=(p.authors||[]).slice(0,3).map(a=>esc(a)).join(', ')+(p.authors&&p.authors.length>3?' et al.':'');
+    const dbCls=panelMode==='similar'?'':(p.in_database?'in-db':'not-in-db');
+    const dbBadge=panelMode==='similar'?'':(p.in_database?'<span class="badge in-db">In library</span>':'<span class="badge not-in-db">Not in library</span>');
+    const scoreBadge=p.score!=null&&panelMode==='similar'?`<span class="badge score">Sim: ${p.score.toFixed(3)}</span>`:'';
+    parts.push(`<div class="cp ${dbCls}">
+      <input type="checkbox" ${chk} onchange="spToggle('${esc(doi)}',this.checked)" ${doi?'':'disabled'}>
+      <div class="cp-content">
+        <div class="cp-title">${doi?`<a href="https://doi.org/${encodeURIComponent(doi)}" target="_blank">${esc(p.title)}</a>`:esc(p.title)}</div>
+        <div class="cp-meta">${au}</div>
+        <div class="cp-meta">${p.journal?esc(p.journal):''}${p.journal&&p.year?' · ':''}${p.year||''}</div>
+        <div class="cp-badges">${dbBadge}
+          ${p.cited_by_count!=null?`<span class="badge">Cited: ${p.cited_by_count}</span>`:''}
+          ${p.referenced_works_count!=null?`<span class="badge">Refs: ${p.referenced_works_count}</span>`:''}
+          ${scoreBadge}
+          ${p.is_oa?'<span class="badge oa">OA</span>':''}
+        </div>
+      </div>
+    </div>`)}
+  body.innerHTML=parts.join('');
+}
+
+function spToggle(doi,c){if(c)panelSelected.add(doi);else panelSelected.delete(doi);document.getElementById('sp-sel').textContent=`${panelSelected.size} selected`}
+function spSelectAll(){getFiltered().forEach(p=>{if(p.doi)panelSelected.add(p.doi)});renderPanel()}
+function spDeselectAll(){panelSelected.clear();renderPanel()}
+function spSelectByDb(inDb){getFiltered().forEach(p=>{if(p.doi&&p.in_database===inDb)panelSelected.add(p.doi)});renderPanel()}
+
+function spExportDois(){
+  const dois=panelSelected.size?[...panelSelected]:getFiltered().map(p=>p.doi).filter(Boolean);
+  if(!dois.length){toast('No DOIs to export');return}
+  document.getElementById('export-count').textContent=`${dois.length} DOIs`;
+  document.getElementById('export-fname').value=(panelMode||'papers')+'_dois.txt';
+  document.getElementById('export-preview').value=dois.join('\n');
+  openM('m-export');
+}
+function doExportDownload(){
+  const text=document.getElementById('export-preview').value;
+  const fname=document.getElementById('export-fname').value||'dois.txt';
+  const blob=new Blob([text],{type:'text/plain'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;a.click();
+  closeM('m-export');toast('Downloaded '+fname);
+}
+function doExportClipboard(){
+  navigator.clipboard.writeText(document.getElementById('export-preview').value).then(()=>{closeM('m-export');toast('Copied to clipboard')}).catch(()=>toast('Clipboard not available'));
+}
+
+function spAddToList(){
+  const dois=panelSelected.size?[...panelSelected]:getFiltered().map(p=>p.doi).filter(Boolean);
+  if(!dois.length){toast('Nothing selected');return}
+  promptAddToList(dois);
+}
+
+/* ============ ADD TO LIST ============ */
+async function promptAddToList(dois){
+  addListDois=dois;
+  const r=await(await fetch('/api/lists')).json();
+  const lists=r.lists||[];
+  let h=lists.length?'<p style="font-size:.85rem;color:var(--muted);margin-bottom:.7rem">Select an existing list:</p>':'<p style="font-size:.85rem;color:var(--muted);margin-bottom:.7rem">No lists yet. Create one below.</p>';
+  for(const l of lists){
+    h+=`<button class="btn-outline btn-sm" style="margin:.2rem" onclick="doAddToList(${l.id})">${esc(l.name)} (${l.paper_count})</button> `}
+  document.getElementById('al-lists').innerHTML=h;
+  document.getElementById('al-new-name').value='';
+  openM('m-addlist');
+}
+async function doAddToList(lid){
+  await jpost(`/api/lists/${lid}/papers`,{dois:addListDois});
+  closeM('m-addlist');
+  toast(`Added ${addListDois.length} paper(s) to list`);
+}
+async function alCreateAndAdd(){
+  const name=document.getElementById('al-new-name').value.trim();
+  if(!name){toast('Enter a name');return}
+  const r=await(await jpost('/api/lists',{name})).json();
+  await doAddToList(r.id);
+}
+
+/* ============ LISTS TAB ============ */
+async function loadLists(){
+  const c=document.getElementById('lists-container');
+  const r=await(await fetch('/api/lists')).json();
+  const lists=r.lists||[];
+  if(!lists.length){c.innerHTML='<div class="no-results">No lists yet. Create one from search results or the citation panel.</div>';return}
+  let h='';
+  for(const l of lists){
+    h+=`<div class="list-card" onclick="showListDetail(${l.id})">
+      <h4>${esc(l.name)}</h4>
+      <div class="lc-meta">${l.paper_count} papers · created ${l.created_at?l.created_at.split('T')[0]:''}</div>
+    </div>`}
+  c.innerHTML=h;
+}
+function promptNewList(){
+  const name=prompt('New list name:');
+  if(!name)return;
+  jpost('/api/lists',{name}).then(()=>{loadLists();toast('List created')});
+}
+async function showListDetail(lid){
+  openM('m-listdetail');
+  const b=document.getElementById('ld-body');
+  b.innerHTML='<div class="loading">Loading…</div>';
+  const lst=await(await fetch(`/api/lists/${lid}`)).json();
+  if(lst.error){b.innerHTML='<div class="no-results">Not found</div>';return}
+  let h=`<h3 style="margin-bottom:.8rem">${esc(lst.name)}</h3>
+    <div style="display:flex;gap:.5rem;margin-bottom:1rem;flex-wrap:wrap">
+      <a href="/api/lists/${lid}/export/bibtex" class="btn-sm btn-outline" download>Export BibTeX</a>
+      <button class="btn-sm btn-outline" onclick="listBibClipboard(${lid})">BibTeX → Clipboard</button>
+      <a href="/api/lists/${lid}/export/dois" class="btn-sm btn-outline" download>Export DOIs</a>
+      <a href="/api/lists/${lid}/export/zip" class="btn-sm btn-green" download>Download PDFs (zip)</a>
+      <button class="btn-sm btn-red" onclick="deleteListConfirm(${lid},'${esc(lst.name)}')">Delete List</button>
+    </div>
+    <p style="font-size:.85rem;color:var(--muted);margin-bottom:.7rem">${lst.papers.length} papers</p>`;
+  for(const p of lst.papers){
+    const au=(p.authors||[]).slice(0,2).map(a=>esc(a)).join(', ')+(p.authors&&p.authors.length>2?' et al.':'');
+    h+=`<div class="paper" style="padding:.7rem .9rem">
+      <div class="paper-title" style="font-size:.9rem" onclick="closeM('m-listdetail');showPaper('${esc(p.doi)}')">${esc(p.title)||'Untitled'}</div>
+      <div class="paper-meta">${au} · ${p.year||''}</div>
+      <button class="btn-ghost" style="font-size:.75rem;color:var(--danger)" onclick="removeFromList(${lid},'${esc(p.doi)}',this.closest('.paper'))">Remove</button>
+    </div>`}
+  b.innerHTML=h;
+}
+async function listBibClipboard(lid){
+  const r=await(await fetch(`/api/lists/${lid}/export/bibtex`)).text();
+  navigator.clipboard.writeText(r).then(()=>toast('BibTeX copied')).catch(()=>toast('Clipboard not available'));
+}
+function deleteListConfirm(lid,name){
+  if(!confirm(`Delete list "${name}"? Papers won't be deleted.`))return;
+  jdel(`/api/lists/${lid}`).then(()=>{closeM('m-listdetail');loadLists();toast('List deleted')});
+}
+async function removeFromList(lid,doi,el){
+  await jdel(`/api/lists/${lid}/papers`,{dois:[doi]});
+  if(el)el.remove();
+  toast('Removed from list');
+}
+
+/* ============ IMPORT ============ */
+function handleDrop(e){handleFiles(e.dataTransfer.files)}
+async function handleFiles(files){
+  const fd=new FormData();
+  let count=0;
+  for(const f of files){
+    if(f.name.toLowerCase().endsWith('.pdf')){fd.append('files',f);count++}
+  }
+  if(!count){toast('No PDF files selected');return}
+  document.getElementById('import-list').innerHTML='<div class="loading"><span class="spinner"></span> Uploading…</div>';
+  const r=await(await fetch('/api/import/upload',{method:'POST',body:fd})).json();
+  toast(`Uploaded ${r.count} file(s)`);
+  // Now resolve
+  document.getElementById('import-list').innerHTML='<div class="loading"><span class="spinner"></span> Resolving DOIs via CrossRef…</div>';
+  const res=await(await jpost('/api/import/resolve',{filenames:r.uploaded})).json();
+  importResults=res.results||[];
+  renderImport();
+}
+function renderImport(){
+  const c=document.getElementById('import-list');
+  if(!importResults.length){c.innerHTML='';document.getElementById('import-actions').style.display='none';return}
+  document.getElementById('import-actions').style.display='block';
+  let h='';
+  for(let i=0;i<importResults.length;i++){
+    const it=importResults[i];
+    const s=it.score||0;
+    const conf=s>=0.6?'high':s>=0.35?'med':'low';
+    const meta=it.metadata||{};
+    h+=`<div class="import-item" id="imp-${i}">
+      <input type="checkbox" ${s>=0.35?'checked':''} class="imp-chk" data-idx="${i}" style="accent-color:var(--accent)">
+      <div class="ii-file">${esc(it.filename)}</div>
+      <div class="ii-meta">
+        <span class="conf-bar conf-${conf}">${(s*100).toFixed(0)}%</span>
+        ${meta.title?esc(meta.title):'<em>No match</em>'}
+        ${meta.authors?' · '+esc(meta.authors.slice(0,2).join(', ')):''}
+        ${meta.year?' ('+meta.year+')':''}
+        ${it.doi?` · <code style="font-size:.7rem">${esc(it.doi)}</code>`:''}
+      </div>
+      <select class="imp-type" style="font-size:.75rem;padding:.2rem">
+        <option value="article">Article</option><option value="book">Book</option>
+        <option value="techreport">Report</option><option value="manual">Manual</option>
+        <option value="thesis">Thesis</option><option value="other">Other</option>
+      </select>
+      <button class="btn-sm btn-red" onclick="deleteImportItem(${i})" title="Remove">✕</button>
+    </div>`}
+  c.innerHTML=h;
+}
+async function deleteImportItem(idx){
+  const it=importResults[idx];
+  await jpost('/api/import/delete',{filename:it.filename});
+  importResults.splice(idx,1);
+  renderImport();
+}
+async function confirmImport(){
+  const items=[];
+  document.querySelectorAll('.imp-chk:checked').forEach(cb=>{
+    const i=parseInt(cb.dataset.idx);
+    const it=importResults[i];
+    if(it&&it.doi){
+      const typeEl=cb.closest('.import-item').querySelector('.imp-type');
+      items.push({filename:it.filename,doi:it.doi,doc_type:typeEl?typeEl.value:'article'})}
+  });
+  if(!items.length){toast('Nothing to import (check items with valid DOIs)');return}
+  document.getElementById('import-list').innerHTML='<div class="loading"><span class="spinner"></span> Importing…</div>';
+  const r=await(await jpost('/api/import/confirm',{items})).json();
+  toast(`Imported ${(r.ingested||[]).length} paper(s)${r.errors&&r.errors.length?', '+r.errors.length+' errors':''}`);
+  importResults=[];
+  renderImport();
+}
+function clearImport(){importResults=[];renderImport();document.getElementById('import-actions').style.display='none'}
+
+/* ============ CENSUS ============ */
+async function runCensus(){
+  openM('m-census');
+  const b=document.getElementById('census-body');
+  b.innerHTML='<div class="loading"><span class="spinner"></span> Scanning library folder…</div>';
+  const r=await(await fetch('/api/census')).json();
+  if(r.error){b.innerHTML=`<div class="no-results">${esc(r.error)}</div>`;return}
+  if(!r.new_files||!r.new_files.length){b.innerHTML=`<div class="no-results">All ${r.known_count} files are already in the database. No new files found in ${esc(r.scanned_dir)}.</div>`;return}
+  let h=`<p style="font-size:.88rem;margin-bottom:.8rem">Found <strong>${r.count}</strong> new file(s) in <code>${esc(r.scanned_dir)}</code> not yet in the database.</p>`;
+  h+='<div style="max-height:40vh;overflow-y:auto;margin-bottom:.8rem">';
+  for(let i=0;i<r.new_files.length;i++){
+    const f=r.new_files[i];
+    h+=`<div style="display:flex;gap:.5rem;align-items:center;padding:.3rem 0;border-bottom:1px solid var(--border);font-size:.82rem">
+      <input type="checkbox" checked class="cen-chk" data-idx="${i}" style="accent-color:var(--accent)">
+      <span style="flex:1">${esc(f.filename)}</span>
+      <code style="font-size:.72rem;color:var(--muted)">${esc(f.doi)}</code>
+    </div>`}
+  h+='</div>';
+  h+=`<button class="btn-green" onclick="doCensusIngest()">Ingest Selected</button>`;
+  b.innerHTML=h;
+  b._files=r.new_files;
+}
+async function doCensusIngest(){
+  const b=document.getElementById('census-body');
+  const files=b._files||[];
+  const items=[];
+  document.querySelectorAll('.cen-chk:checked').forEach(cb=>{
+    const f=files[parseInt(cb.dataset.idx)];
+    if(f)items.push({doi:f.doi,path:f.path})});
+  if(!items.length){toast('Nothing selected');return}
+  b.innerHTML='<div class="loading"><span class="spinner"></span> Ingesting…</div>';
+  const r=await(await jpost('/api/census/ingest',{items})).json();
+  toast(`Ingested ${(r.ingested||[]).length} paper(s)`);
+  closeM('m-census');
+}
+
+/* ============ SETTINGS ============ */
+function onBackendChange(){
+  const b=document.getElementById('set-backend').value;
+  document.getElementById('backend-ollama-opts').style.display=b==='ollama'?'block':'none';
+  document.getElementById('backend-sbert-opts').style.display=b==='sbert'?'block':'none';
+  document.getElementById('backend-openai-opts').style.display=b==='openai'?'block':'none';
+}
+async function loadSettings(){
+  const r=await(await fetch('/api/settings')).json();
+  // Backend
+  const b=(r.embedding_backend||r.backend_info?.backend||'ollama');
+  document.getElementById('set-backend').value=b;
+  onBackendChange();
+  document.getElementById('set-ollama-url').value=r.ollama_url||'http://localhost:11434';
+  document.getElementById('set-ollama-model').value=r.ollama_model||'nomic-embed-text';
+  document.getElementById('set-sbert-model').value=r.sbert_model||'BAAI/bge-large-en-v1.5';
+  document.getElementById('set-openai').value=r.openai_api_key||'';
+  document.getElementById('set-openai').placeholder=r.openai_api_key_set?'Key is set (enter new to replace)':'sk-...';
+  document.getElementById('set-openai-model').value=r.openai_model||'text-embedding-3-small';
+  // Backend status
+  const bi=r.backend_info||{};
+  const avail=r.embeddings_available;
+  document.getElementById('backend-status').innerHTML=
+    `Active: <strong>${bi.backend||'?'}</strong> · Model: ${bi.model||'?'} · ${bi.dims||'?'} dims · ${avail?'<span style="color:var(--ok)">ready</span>':'<span style="color:var(--danger)">not available</span>'}`;
+  // FAISS
+  const fAvail=r.faiss_available;
+  document.getElementById('faiss-status').innerHTML=fAvail
+    ?`faiss-cpu installed · ${r.faiss_vectors||0} vectors indexed${r.faiss_needs_rebuild?' · <span style="color:var(--warn)">needs rebuild</span>':' · <span style="color:var(--ok)">up to date</span>'}`
+    :'<span style="color:var(--warn)">faiss-cpu not installed</span> — using brute-force search. Install with: <code>pip install faiss-cpu</code>';
+  // General
+  document.getElementById('set-email').value=r.polite_email||'';
+  document.getElementById('set-pdfdir').value=r.pdf_base_dir||'';
+  document.getElementById('set-autoembed').value=r.auto_embed||'yes';
+  document.getElementById('set-deftype').value=r.default_doc_type||'article';
+}
+async function saveSettings(){
+  const data={};
+  data.embedding_backend=document.getElementById('set-backend').value;
+  data.ollama_url=document.getElementById('set-ollama-url').value.trim();
+  data.ollama_model=document.getElementById('set-ollama-model').value.trim();
+  data.sbert_model=document.getElementById('set-sbert-model').value.trim();
+  data.openai_model=document.getElementById('set-openai-model').value.trim();
+  const k=document.getElementById('set-openai').value.trim();
+  if(k&&!k.startsWith('sk-...'))data.openai_api_key=k;
+  data.polite_email=document.getElementById('set-email').value.trim();
+  data.pdf_base_dir=document.getElementById('set-pdfdir').value.trim();
+  data.auto_embed=document.getElementById('set-autoembed').value;
+  data.default_doc_type=document.getElementById('set-deftype').value;
+  await jput('/api/settings',data);
+  document.getElementById('settings-status').textContent='Saved ✓';
+  setTimeout(()=>document.getElementById('settings-status').textContent='',2500);
+  toast('Settings saved');
+  loadSettings(); // Refresh status
+}
+async function rebuildFaiss(){
+  toast('Rebuilding FAISS index…');
+  const r=await(await jpost('/api/faiss/rebuild',{})).json();
+  if(r.error)toast('Error: '+r.error);
+  else{toast('Index rebuilt');loadSettings()}
+}
+async function reembed(onlyMissing){
+  toast(onlyMissing?'Embedding missing papers…':'Re-embedding all papers…');
+  const r=await(await jpost('/api/reembed',{only_missing:onlyMissing})).json();
+  if(r.error)toast('Error: '+r.error);
+  else toast(`Done: ${r.embedded} embedded, ${r.errors} errors`);
+  loadSettings();
+}
+
+/* ============ KEYBOARD ============ */
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){
+    if(document.getElementById('sp-panel').classList.contains('open'))closePanel();
+    else document.querySelectorAll('.modal-bg.open').forEach(m=>m.classList.remove('open'));
+  }
+});
+</script>
+</body>
+</html>
