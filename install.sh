@@ -2,11 +2,11 @@
 set -euo pipefail
 
 # ============================================================
-#  Paper Search — Automated Installer
+#  Paper Database — Automated Installer
 #
 #  Expected layout (install.sh lives above the source):
 #
-#    paper_search/
+#    paperdb/
 #    ├── install.sh          ← you are here
 #    ├── README.md
 #    ├── papers.db           ← optional, if sharing a pre-built DB
@@ -32,7 +32,7 @@ SRC_DIR="$SCRIPT_DIR/src"
 DEFAULT_INSTALL_DIR="/opt/paperdb"
 DEFAULT_PDF_DIR="/mnt/storage/library/"
 DEFAULT_PORT=5000
-DEFAULT_EMAIL="awgolas@gmail.com"
+DEFAULT_EMAIL="me@uni.edu"
 DEFAULT_USER="paperdb"
 DEFAULT_MODEL="qwen3-embedding:0.6b"
 
@@ -490,7 +490,7 @@ fi
 # ============================================================
 info "Creating systemd service..."
 
-cat > /etc/systemd/system/paper_search.service << UNIT
+cat > /etc/systemd/system/paperdb.service << UNIT
 [Unit]
 Description=Paper Search Web Application
 After=network.target ollama.service
@@ -517,8 +517,8 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable paper_search
-systemctl start paper_search
+systemctl enable paperdb
+systemctl start paperdb
 
 ok "Service installed and started"
 
@@ -532,7 +532,7 @@ sleep 3
 if curl -sf "http://localhost:$PORT/" >/dev/null 2>&1; then
     ok "Paper Search is running at http://localhost:$PORT"
 else
-    warn "Server may still be starting — check: systemctl status paper_search"
+    warn "Server may still be starting — check: systemctl status paperdb"
 fi
 
 # ============================================================
@@ -545,10 +545,10 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 echo "  Web UI:    http://localhost:$PORT"
 echo "  Model:     $OLLAMA_MODEL"
-echo "  Logs:      journalctl -u paper_search -f"
-echo "  Status:    systemctl status paper_search"
-echo "  Restart:   systemctl restart paper_search"
-echo "  Stop:      systemctl stop paper_search"
+echo "  Logs:      journalctl -u paperdb -f"
+echo "  Status:    systemctl status paperdb"
+echo "  Restart:   systemctl restart paperdb"
+echo "  Stop:      systemctl stop paperdb"
 echo ""
 echo "  Config:    $INSTALL_DIR   (source + DB + venv)"
 echo "  Settings:  Use the web UI Settings tab"
