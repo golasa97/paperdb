@@ -265,8 +265,8 @@ def _embed_ollama(text: str) -> np.ndarray:
 def _embed_ollama_batch(texts: list[str]) -> list[np.ndarray]:
     """Batch embed via /api/embed (supports array input natively)."""
     processed = [t[:30000] for t in texts]
-    batch_timeout_raw = _read_setting("ollama_timeout_batch", "300").strip()
-    batch_timeout = int(batch_timeout_raw) if batch_timeout_raw.isdigit() else 300
+    batch_timeout_raw = _read_setting("ollama_timeout_batch", "600").strip()
+    batch_timeout = int(batch_timeout_raw) if batch_timeout_raw.isdigit() else 600
     try:
         resp = _ollama_post("/api/embed", _ollama_embed_payload(processed), timeout=batch_timeout)
         data = resp.json()
@@ -385,8 +385,8 @@ def get_embeddings_batch(texts: list[str], batch_size: int = 100,
     elif b == "ollama":
         from tqdm import tqdm as _tqdm
         all_embs = []
-        batch_n_raw = _read_setting("ollama_batch_size", "64").strip()
-        batch_n = int(batch_n_raw) if batch_n_raw.isdigit() else 64
+        batch_n_raw = _read_setting("ollama_batch_size", "512").strip()
+        batch_n = int(batch_n_raw) if batch_n_raw.isdigit() else 512
         batch_n = max(1, batch_n)
         batches = [texts[i:i+batch_n] for i in range(0, len(texts), batch_n)]
         it = _tqdm(batches, desc="Embedding (Ollama)") if progress else batches
