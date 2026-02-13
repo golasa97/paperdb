@@ -26,7 +26,7 @@ from database import (
 from crossref import fetch_metadata_batch
 from pdf_extract import extract_text_batch
 from embeddings import (
-    get_embedding, create_paper_chunks, get_backend, backend_info,
+    get_embedding, get_embeddings_batch, create_paper_chunks, get_backend, backend_info,
     get_embedding_dims,
 )
 
@@ -72,10 +72,12 @@ def embed_paper_chunks(paper: dict) -> int:
     if not chunk_texts:
         return 0
 
-    chunk_rows = []
-    for chunk_idx, text in chunk_texts:
-        emb = get_embedding(text)
-        chunk_rows.append((chunk_idx, text, emb))
+    texts = [text for _, text in chunk_texts]
+    embeddings = get_embeddings_batch(texts, progress=False)
+    chunk_rows = [
+        (chunk_idx, text, emb)
+        for (chunk_idx, text), emb in zip(chunk_texts, embeddings)
+    ]
 
     insert_chunks(paper['doi'], chunk_rows)
     return len(chunk_rows)
