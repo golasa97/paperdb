@@ -104,14 +104,28 @@ def process_chunk(dois, pdf_files, email, skip_fulltext, skip_embeddings,
             pdf_path=str(pdf_files[doi]), full_text=fulltext_results.get(doi),
         )
     if not skip_embeddings:
+        # Collect all chunks across all papers in this batch, embed together
+        all_texts = []
+        all_keys = []  # (doi, chunk_index)
         for doi in dois:
             paper = get_paper_by_doi(doi)
             if paper and (paper.get('abstract') or paper.get('title')):
-                try:
-                    n = embed_paper_chunks(paper)
-                    stats['embedded'] += n
-                except Exception as e:
-                    print(f"Error embedding {doi}: {e}")
+                chunk_texts = create_paper_chunks(paper)
+                for cidx, text in chunk_texts:
+                    all_texts.append(text)
+                    all_keys.append((doi, cidx))
+        if all_texts:
+            try:
+                all_embs = get_embeddings_batch(all_texts, progress=False)
+                from collections import defaultdict
+                by_doi = defaultdict(list)
+                for (doi, cidx), text, emb in zip(all_keys, all_texts, all_embs):
+                    by_doi[doi].append((cidx, text, emb))
+                for doi, chunk_rows in by_doi.items():
+                    insert_chunks(doi, chunk_rows)
+                    stats['embedded'] += len(chunk_rows)
+            except Exception as e:
+                print(f"Batch embedding error: {e}")
     return stats
 
 
@@ -138,8 +152,20 @@ def _print_embedding_status():
         print("\nNo chunk embeddings in database yet.")
 
 
-def run_embeddings_only(batch_size=50):
-    """Generate chunk embeddings for papers that need them."""
+def run_embeddings_only(batch_size=50, embed_batch_size=512):
+    """
+    Generate chunk embeddings for papers that need them.
+
+    This collects chunks across many papers into large batches before
+    sending to the embedding backend, which dramatically improves GPU
+    utilization compared to embedding one paper at a time.
+
+    Args:
+        batch_size: Number of papers to chunk before flushing an embed batch.
+        embed_batch_size: Number of text chunks per embedding API call.
+            Larger = better GPU utilization. 512 is good for most GPUs.
+            If you run out of VRAM, lower this.
+    """
     info = backend_info()
     expected_dims = get_embedding_dims()
 
@@ -152,22 +178,80 @@ def run_embeddings_only(batch_size=50):
         return 0
 
     print(f"\n{len(papers)} papers need chunk embedding with {info['backend']} ({info['model']}).")
+    print(f"Embed batch size: {embed_batch_size} chunks per API call")
 
-    total_chunks, errors = 0, 0
-    for paper in tqdm(papers, desc="Chunking & embedding"):
+    total_chunks, total_papers, errors = 0, 0, 0
+
+    # Accumulator: collect chunks across papers, flush in large batches
+    pending_texts = []      # flat list of chunk texts
+    pending_keys = []       # parallel list of (doi, chunk_index)
+    pending_cleanup = set() # DOIs whose old chunks need deleting
+
+    def flush_pending():
+        """Embed all pending chunks and write to DB."""
+        nonlocal total_chunks, total_papers, errors
+        if not pending_texts:
+            return
+
         try:
-            # Delete old chunks for this paper if any (dimension mismatch case)
-            delete_chunks_for_paper(paper['doi'])
-            n = embed_paper_chunks(paper)
-            total_chunks += n
+            all_embs = get_embeddings_batch(
+                pending_texts, batch_size=embed_batch_size, progress=False
+            )
+        except Exception as e:
+            print(f"\nBatch embedding error ({len(pending_texts)} chunks): {e}")
+            errors += len(set(k[0] for k in pending_keys))
+            return
+
+        # Delete old chunks for papers in this batch (dim mismatch case)
+        for doi in pending_cleanup:
+            delete_chunks_for_paper(doi)
+
+        # Group results by DOI and insert
+        from collections import defaultdict
+        by_doi = defaultdict(list)
+        for (doi, cidx), text, emb in zip(pending_keys, pending_texts, all_embs):
+            by_doi[doi].append((cidx, text, emb))
+
+        for doi, chunk_rows in by_doi.items():
+            try:
+                insert_chunks(doi, chunk_rows)
+                total_chunks += len(chunk_rows)
+                total_papers += 1
+            except Exception as e:
+                errors += 1
+                if errors <= 5:
+                    print(f"\nDB insert error {doi}: {e}")
+
+    # Process papers, collecting chunks into large batches
+    pbar = tqdm(papers, desc="Chunking & embedding", unit="paper")
+    for paper in pbar:
+        try:
+            chunk_texts = create_paper_chunks(paper)
+            if not chunk_texts:
+                continue
+
+            pending_cleanup.add(paper['doi'])
+            for cidx, text in chunk_texts:
+                pending_texts.append(text)
+                pending_keys.append((paper['doi'], cidx))
+
+            # Flush when we've accumulated enough chunks
+            if len(pending_texts) >= embed_batch_size:
+                flush_pending()
+                pending_texts.clear()
+                pending_keys.clear()
+                pending_cleanup.clear()
+                pbar.set_postfix(chunks=total_chunks, papers=total_papers, errors=errors)
+
         except Exception as e:
             errors += 1
             if errors <= 5:
-                print(f"Error: {paper['doi']}: {e}")
-            if errors == 6:
-                print("(suppressing further error messages)")
+                print(f"\nError chunking {paper['doi']}: {e}")
 
-    print(f"\nDone. {total_chunks} chunks from {len(papers) - errors} papers, {errors} errors.")
+    # Flush remaining
+    flush_pending()
+
+    print(f"\nDone. {total_chunks} chunks from {total_papers} papers, {errors} errors.")
 
     # Rebuild FAISS index
     try:
@@ -181,7 +265,7 @@ def run_embeddings_only(batch_size=50):
     return total_chunks
 
 
-def run_reembed_all(batch_size=50):
+def run_reembed_all(batch_size=50, embed_batch_size=512):
     """Clear ALL chunk embeddings and re-embed everything."""
     info = backend_info()
     _print_embedding_status()
@@ -198,7 +282,7 @@ def run_reembed_all(batch_size=50):
     delete_all_chunks()
 
     print("Starting re-embed...\n")
-    return run_embeddings_only(batch_size=batch_size)
+    return run_embeddings_only(batch_size=batch_size, embed_batch_size=embed_batch_size)
 
 
 def main():
@@ -217,6 +301,9 @@ def main():
                         help="Clear ALL chunk embeddings and re-embed everything with current backend.")
     parser.add_argument("--status", action="store_true",
                         help="Print embedding status and exit.")
+    parser.add_argument("--embed-batch-size", type=int, default=512,
+                        help="Chunks per embedding API call. Higher = better GPU utilization. "
+                             "Lower if you run out of VRAM. (default: 512)")
     args = parser.parse_args()
 
     print("Initializing database...")
@@ -232,7 +319,7 @@ def main():
     if args.reembed:
         before = get_stats()
         print(f"DB: {before['total_papers']} papers, {before['with_chunks']} with chunks.")
-        run_reembed_all(batch_size=args.chunk_size)
+        run_reembed_all(batch_size=args.chunk_size, embed_batch_size=args.embed_batch_size)
         after = get_stats()
         print(f"Now: {after['with_chunks']} papers with chunks ({after['total_chunks']} chunks).")
         return 0
@@ -240,7 +327,7 @@ def main():
     if args.embeddings_only:
         before = get_stats()
         print(f"DB: {before['total_papers']} papers, {before['with_chunks']} with chunks.")
-        run_embeddings_only(batch_size=args.chunk_size)
+        run_embeddings_only(batch_size=args.chunk_size, embed_batch_size=args.embed_batch_size)
         after = get_stats()
         print(f"Now: {after['with_chunks']} papers with chunks ({after['total_chunks']} chunks).")
         return 0
