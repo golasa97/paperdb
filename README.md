@@ -244,7 +244,7 @@ Click the **Census** button to scan your PDF directory for files not yet in the 
 
 ### Settings (Web UI)
 All configuration is in the Settings tab:
-- **Embedding backend**: Ollama / sentence-transformers / OpenAI
+- **Embedding backend**: Ollama / MLX / sentence-transformers / OpenAI
 - **Model names and URLs** for each backend
 - **FAISS index status** with rebuild button
 - **Embed missing** / **Re-embed all** buttons
@@ -258,8 +258,20 @@ All configuration is in the Settings tab:
 | Backend | Install | Speed (CPU) | Quality | Dims |
 |---|---|---|---|---|
 | **Ollama** | Install Ollama + `ollama pull <model>` | ~50 papers/sec | Very good → Best | varies |
+| **MLX (Apple Silicon)** | `pip install mlx mlx-embeddings` | ~40 papers/sec (M-series GPU) | Very good | varies |
 | **sentence-transformers** | `pip install sentence-transformers` | ~30 papers/sec | Very good → Best | varies |
 | **OpenAI** | `pip install openai` + API key | ~200 papers/sec | Best | 1536 |
+
+### Recommended MLX models (macOS / Apple Silicon)
+
+| Model | Package ID | Dims | Notes |
+|---|---|---|---|
+| `bge-small-en-v1.5` | `mlx-community/bge-small-en-v1.5-4bit` | 384 | Fastest, smallest memory footprint |
+| `bge-base-en-v1.5` | `mlx-community/bge-base-en-v1.5-4bit` | 768 | Good balance of quality and speed |
+| `bge-large-en-v1.5` | `mlx-community/bge-large-en-v1.5-4bit` | 1024 | Best quality among listed MLX defaults |
+| `Qwen3-Embedding-0.6B` | `mlx-community/Qwen3-Embedding-0.6B-4bit` | 1024 | Multilingual Qwen3 option |
+| `Qwen3-Embedding-4B` | `mlx-community/Qwen3-Embedding-4B-4bit` | 2560 | Higher-quality Qwen3 option |
+| `Qwen3-Embedding-8B` | `mlx-community/Qwen3-Embedding-8B-4bit` | 4096 | Highest-quality local MLX option |
 
 ### Recommended Ollama models
 

@@ -6,11 +6,12 @@ Embeddings module supporting multiple backends:
       qwen3-embedding:4b (2560d), qwen3-embedding:8b (4096d), and others
   - sbert:   sentence-transformers — supports:
       BAAI/bge-large-en-v1.5 (1024d), Qwen/Qwen3-Embedding-0.6B (1024d), etc.
+  - mlx:     Apple MLX embeddings (local, macOS/Apple Silicon)
 
 The active backend is determined by (in order):
   1. Explicit set_backend() call
   2. The 'embedding_backend' key in the settings DB
-  3. Auto-detection: tries ollama -> sbert -> openai
+  3. Auto-detection: tries ollama -> mlx -> sbert -> openai
 
 Dimensions are auto-detected from the first embedding call, or looked up
 from the KNOWN_DIMS table for common models.
@@ -25,8 +26,9 @@ from pathlib import Path
 
 # --------------- backend state ---------------
 
-_backend = None        # 'openai' | 'ollama' | 'sbert'
+_backend = None        # 'openai' | 'ollama' | 'sbert' | 'mlx'
 _sbert_model = None    # lazy-loaded SentenceTransformer instance
+_mlx_model = None      # lazy-loaded MLX embedding model instance
 _openai_client = None  # lazy-loaded OpenAI client
 _ollama_session = None  # lazy-loaded requests session for keep-alive
 
@@ -34,6 +36,7 @@ BACKEND_DEFAULTS = {
     "openai": {"model": "text-embedding-3-small", "dims": 1536},
     "ollama": {"model": "nomic-embed-text",       "dims": 768, "url": "http://localhost:11434"},
     "sbert":  {"model": "BAAI/bge-large-en-v1.5", "dims": 1024},
+    "mlx":    {"model": "mlx-community/bge-small-en-v1.5-4bit", "dims": 384},
 }
 
 # Known model → default dimension mapping.
@@ -56,6 +59,13 @@ KNOWN_DIMS = {
     "Qwen/Qwen3-Embedding-0.6B": 1024,
     "Qwen/Qwen3-Embedding-4B":   2560,
     "Qwen/Qwen3-Embedding-8B":   4096,
+    # MLX community models
+    "mlx-community/bge-small-en-v1.5-4bit": 384,
+    "mlx-community/bge-base-en-v1.5-4bit": 768,
+    "mlx-community/bge-large-en-v1.5-4bit": 1024,
+    "mlx-community/Qwen3-Embedding-0.6B-4bit": 1024,
+    "mlx-community/Qwen3-Embedding-4B-4bit": 2560,
+    "mlx-community/Qwen3-Embedding-8B-4bit": 4096,
     # OpenAI models
     "text-embedding-3-small":    1536,
     "text-embedding-3-large":    3072,
@@ -78,7 +88,7 @@ def _read_setting(key: str, default: str = "") -> str:
 def _detect_backend() -> str:
     """Auto-detect which backend is available."""
     saved = _read_setting("embedding_backend", "")
-    if saved in ("openai", "ollama", "sbert"):
+    if saved in ("openai", "ollama", "sbert", "mlx"):
         return saved
 
     # Try Ollama
@@ -88,6 +98,13 @@ def _detect_backend() -> str:
         if r.ok:
             return "ollama"
     except Exception:
+        pass
+
+    # Try MLX embeddings (best on Apple Silicon)
+    try:
+        import mlx_embeddings  # noqa: F401
+        return "mlx"
+    except ImportError:
         pass
 
     # Try sentence-transformers
@@ -114,11 +131,12 @@ def get_backend() -> str:
 
 def set_backend(name: str):
     """Explicitly set the backend."""
-    global _backend, _sbert_model, _openai_client, _ollama_session, _detected_dims
-    if name not in ("openai", "ollama", "sbert"):
+    global _backend, _sbert_model, _mlx_model, _openai_client, _ollama_session, _detected_dims
+    if name not in ("openai", "ollama", "sbert", "mlx"):
         raise ValueError(f"Unknown backend: {name}")
     _backend = name
     _sbert_model = None
+    _mlx_model = None
     _openai_client = None
     _ollama_session = None
     _detected_dims = None
@@ -286,6 +304,76 @@ def _embed_ollama_batch(texts: list[str]) -> list[np.ndarray]:
 
 # --------------- sentence-transformers ---------------
 
+def _get_mlx_model():
+    """Load an MLX embedding model with broad compatibility across package versions."""
+    global _mlx_model
+    if _mlx_model is None:
+        import mlx_embeddings
+        model_name = _read_setting("mlx_model", BACKEND_DEFAULTS["mlx"]["model"])
+
+        if hasattr(mlx_embeddings, "EmbeddingModel"):
+            _mlx_model = mlx_embeddings.EmbeddingModel.from_registry(model_name)
+        elif hasattr(mlx_embeddings, "load"):
+            _mlx_model = mlx_embeddings.load(model_name)
+        elif hasattr(mlx_embeddings, "load_model"):
+            _mlx_model = mlx_embeddings.load_model(model_name)
+        else:
+            raise RuntimeError(
+                "Unsupported mlx_embeddings package API. "
+                "Expected one of: EmbeddingModel, load(), or load_model()."
+            )
+    return _mlx_model
+
+
+def _mlx_encode(texts: list[str]):
+    """Call whichever encode/embed API the installed mlx_embeddings package exposes."""
+    model = _get_mlx_model()
+
+    if hasattr(model, "encode"):
+        return model.encode(texts)
+    if hasattr(model, "embed"):
+        return model.embed(texts)
+    if callable(model):
+        return model(texts)
+
+    raise RuntimeError("MLX model object does not provide encode/embed/callable interface")
+
+
+def _normalize_mlx_embeddings(raw, expected_count: int) -> list[np.ndarray]:
+    """Normalize potential return shapes from mlx_embeddings into list[np.ndarray]."""
+    if isinstance(raw, dict):
+        if "embeddings" in raw:
+            raw = raw["embeddings"]
+        elif "embedding" in raw:
+            raw = [raw["embedding"]]
+
+    arr = np.asarray(raw, dtype=np.float32)
+    if arr.ndim == 1:
+        return [arr]
+    if arr.ndim == 2:
+        return [row.astype(np.float32) for row in arr]
+
+    raise RuntimeError(f"Unexpected MLX embedding output shape: {arr.shape}")
+
+
+def _embed_mlx(text: str) -> np.ndarray:
+    if len(text) > 30000:
+        text = text[:30000]
+    return _normalize_mlx_embeddings(_mlx_encode([text]), expected_count=1)[0]
+
+
+def _embed_mlx_batch(texts: list[str]) -> list[np.ndarray]:
+    processed = [t[:30000] for t in texts]
+    embs = _normalize_mlx_embeddings(_mlx_encode(processed), expected_count=len(processed))
+    if len(embs) != len(processed):
+        raise RuntimeError(
+            f"MLX backend returned {len(embs)} embeddings for {len(processed)} inputs"
+        )
+    return embs
+
+
+# --------------- sentence-transformers ---------------
+
 def _get_sbert_model():
     global _sbert_model
     if _sbert_model is None:
@@ -356,6 +444,8 @@ def get_embedding(text: str, client=None) -> np.ndarray:
         emb = _embed_ollama(text)
     elif b == "sbert":
         emb = _embed_sbert(text)
+    elif b == "mlx":
+        emb = _embed_mlx(text)
     else:
         raise ValueError(f"Unknown backend: {b}")
     # Auto-detect dims from the first real call
@@ -397,6 +487,11 @@ def get_embeddings_batch(texts: list[str], batch_size: int = 100,
         return all_embs
     elif b == "sbert":
         embs = _embed_sbert_batch(texts)
+        if embs and _detected_dims is None:
+            _detected_dims = embs[0].shape[0]
+        return embs
+    elif b == "mlx":
+        embs = _embed_mlx_batch(texts)
         if embs and _detected_dims is None:
             _detected_dims = embs[0].shape[0]
         return embs

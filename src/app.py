@@ -66,6 +66,12 @@ def _embeddings_available():
             return True
         except ImportError:
             return False
+    elif b == "mlx":
+        try:
+            import mlx_embeddings  # noqa: F401
+            return True
+        except ImportError:
+            return False
     return False
 
 
@@ -630,7 +636,7 @@ def api_put_settings():
     data = request.get_json(silent=True) or {}
     allowed = {"polite_email", "pdf_base_dir", "openai_api_key", "auto_embed",
                "default_doc_type", "embedding_backend", "ollama_url", "ollama_model",
-               "sbert_model", "openai_model"}
+               "sbert_model", "mlx_model", "openai_model"}
     for k, v in data.items():
         if k in allowed:
             if k == "openai_api_key" and v.startswith("sk-..."):

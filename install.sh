@@ -35,6 +35,8 @@ DEFAULT_PORT=5000
 DEFAULT_EMAIL="me@uni.edu"
 DEFAULT_USER="paperdb"
 DEFAULT_MODEL="qwen3-embedding:0.6b"
+DEFAULT_BACKEND="ollama"
+DEFAULT_MLX_MODEL="mlx-community/bge-small-en-v1.5-4bit"
 
 # ---------- colors ----------
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -93,9 +95,16 @@ ask PORT         "Web server port"                       "$DEFAULT_PORT"
 ask EMAIL        "Email for CrossRef/OpenAlex (optional)" "$DEFAULT_EMAIL"
 ask SVC_USER     "System user to run the service"        "$DEFAULT_USER"
 
-# ---------- embedding model selection ----------
+# ---------- embedding backend + model selection ----------
+ask EMBEDDING_BACKEND "Embedding backend (ollama/mlx)" "$DEFAULT_BACKEND"
+EMBEDDING_BACKEND="${EMBEDDING_BACKEND,,}"
+if [[ "$EMBEDDING_BACKEND" != "ollama" && "$EMBEDDING_BACKEND" != "mlx" ]]; then
+    EMBEDDING_BACKEND="$DEFAULT_BACKEND"
+fi
+
 OLLAMA_MODEL="$DEFAULT_MODEL"
-if $INTERACTIVE; then
+MLX_MODEL="$DEFAULT_MLX_MODEL"
+if $INTERACTIVE && [[ "$EMBEDDING_BACKEND" == "ollama" ]]; then
     echo ""
     echo -e "${BOLD}Select an Ollama embedding model:${NC}"
     echo ""
@@ -128,6 +137,45 @@ if $INTERACTIVE; then
     esac
 fi
 
+if $INTERACTIVE && [[ "$EMBEDDING_BACKEND" == "mlx" ]]; then
+    echo ""
+    echo -e "${BOLD}Select an MLX embedding model:${NC}"
+    echo ""
+    echo "  1) mlx-community/bge-small-en-v1.5-4bit      384d   Fastest"
+    echo "  2) mlx-community/bge-base-en-v1.5-4bit       768d   Balanced"
+    echo "  3) mlx-community/bge-large-en-v1.5-4bit     1024d   Best BGE quality"
+    echo "  4) mlx-community/Qwen3-Embedding-0.6B-4bit  1024d   Multilingual"
+    echo "  5) mlx-community/Qwen3-Embedding-4B-4bit    2560d   Higher quality"
+    echo "  6) mlx-community/Qwen3-Embedding-8B-4bit    4096d   Highest quality"
+    echo "  7) Custom (enter model name manually)"
+    echo ""
+    read -rp "$(echo -e "${BLUE}?${NC} Choice [1]: ")" mlx_choice
+    mlx_choice="${mlx_choice:-1}"
+
+    case "$mlx_choice" in
+        1) MLX_MODEL="mlx-community/bge-small-en-v1.5-4bit" ;;
+        2) MLX_MODEL="mlx-community/bge-base-en-v1.5-4bit" ;;
+        3) MLX_MODEL="mlx-community/bge-large-en-v1.5-4bit" ;;
+        4) MLX_MODEL="mlx-community/Qwen3-Embedding-0.6B-4bit" ;;
+        5) MLX_MODEL="mlx-community/Qwen3-Embedding-4B-4bit" ;;
+        6) MLX_MODEL="mlx-community/Qwen3-Embedding-8B-4bit" ;;
+        7)
+            read -rp "$(echo -e "${BLUE}?${NC} MLX model name: ")" MLX_MODEL
+            if [[ -z "$MLX_MODEL" ]]; then
+                MLX_MODEL="$DEFAULT_MLX_MODEL"
+                warn "No model entered, using default: $DEFAULT_MLX_MODEL"
+            fi
+            ;;
+        *) MLX_MODEL="$DEFAULT_MLX_MODEL" ;;
+    esac
+fi
+
+if [[ "$EMBEDDING_BACKEND" == "mlx" ]]; then
+    EMBEDDING_MODEL="$MLX_MODEL"
+else
+    EMBEDDING_MODEL="$OLLAMA_MODEL"
+fi
+
 # ---------- summary ----------
 echo ""
 info "Configuration:"
@@ -136,7 +184,8 @@ info "  PDF dir     : ${PDF_DIR:-<not set>}"
 info "  Port        : $PORT"
 info "  Email       : ${EMAIL:-<not set>}"
 info "  Service user: $SVC_USER"
-info "  Embed model : $OLLAMA_MODEL"
+info "  Backend     : $EMBEDDING_BACKEND"
+info "  Embed model : $EMBEDDING_MODEL"
 echo ""
 
 if $INTERACTIVE; then
@@ -237,6 +286,7 @@ pip install faiss-cpu -q 2>/dev/null || warn "faiss-cpu install failed — will 
 ok "Python environment ready"
 deactivate
 
+if [[ "$EMBEDDING_BACKEND" == "ollama" ]]; then
 # ============================================================
 # 5. Install Ollama
 # ============================================================
@@ -287,6 +337,13 @@ else
         warn "Could not verify embedding model — it may still be loading. Check after install."
     fi
 fi
+else
+    info "Installing MLX dependencies in virtual environment..."
+    source "$INSTALL_DIR/venv/bin/activate"
+    pip install mlx mlx-embeddings -q || warn "MLX packages failed to install; you can install manually later with: pip install mlx mlx-embeddings"
+    python3 -c "import mlx_embeddings" >/dev/null 2>&1 && ok "mlx-embeddings import check passed" || warn "mlx-embeddings import check failed"
+    deactivate
+fi
 
 # ============================================================
 # 6. Initialize database & settings
@@ -299,9 +356,12 @@ cd "$INSTALL_DIR"
 python3 -c "
 from database import init_db, set_setting
 init_db()
-set_setting('embedding_backend', 'ollama')
-set_setting('ollama_url', 'http://localhost:11434')
-set_setting('ollama_model', '${OLLAMA_MODEL}')
+set_setting('embedding_backend', '${EMBEDDING_BACKEND}')
+if '${EMBEDDING_BACKEND}' == 'ollama':
+    set_setting('ollama_url', 'http://localhost:11434')
+    set_setting('ollama_model', '${OLLAMA_MODEL}')
+elif '${EMBEDDING_BACKEND}' == 'mlx':
+    set_setting('mlx_model', '${MLX_MODEL}')
 pdf_dir = '${PDF_DIR}'
 if pdf_dir:
     set_setting('pdf_base_dir', pdf_dir)
@@ -366,7 +426,7 @@ case "$EMBED_CHECK" in
         warn "$COUNT papers found but none have chunk embeddings for the current model."
         if $INTERACTIVE; then
             echo ""
-            echo -e "  ${BOLD}Papers need to be chunked and embedded with $OLLAMA_MODEL.${NC}"
+            echo -e "  ${BOLD}Papers need to be chunked and embedded with $EMBEDDING_MODEL.${NC}"
             echo "  This will split each paper's text into 400-800 token chunks"
             echo "  and generate an embedding for each chunk."
             echo ""
@@ -400,11 +460,11 @@ case "$EMBED_CHECK" in
         WRONG=$(echo "$EMBED_CHECK" | cut -d: -f3)
         HAS=$(echo "$EMBED_CHECK" | cut -d: -f4)
         TDIMS=$(echo "$EMBED_CHECK" | cut -d: -f5)
-        warn "$WRONG of $HAS chunk embeddings have wrong dimensions (need ${TDIMS}d for $OLLAMA_MODEL)."
+        warn "$WRONG of $HAS chunk embeddings have wrong dimensions (need ${TDIMS}d for $EMBEDDING_MODEL)."
         if $INTERACTIVE; then
             echo ""
             echo -e "  ${BOLD}Existing embeddings were created with a different model.${NC}"
-            echo "  They need to be re-embedded to work with $OLLAMA_MODEL."
+            echo "  They need to be re-embedded to work with $EMBEDDING_MODEL."
             echo ""
             echo "  Options:"
             echo "    1) Skip for now — start the server and re-embed later"
@@ -490,11 +550,18 @@ fi
 # ============================================================
 info "Creating systemd service..."
 
+UNIT_OLLAMA_AFTER=""
+UNIT_OLLAMA_WANTS=""
+if [[ "$EMBEDDING_BACKEND" == "ollama" ]]; then
+    UNIT_OLLAMA_AFTER=" ollama.service"
+    UNIT_OLLAMA_WANTS="ollama.service"
+fi
+
 cat > /etc/systemd/system/paperdb.service << UNIT
 [Unit]
 Description=Paper Search Web Application
-After=network.target ollama.service
-Wants=ollama.service
+After=network.target${UNIT_OLLAMA_AFTER}
+${UNIT_OLLAMA_WANTS:+Wants=${UNIT_OLLAMA_WANTS}}
 
 [Service]
 Type=simple
@@ -544,7 +611,8 @@ echo -e "${GREEN}║  Installation complete!                              ║${N
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "  Web UI:    http://localhost:$PORT"
-echo "  Model:     $OLLAMA_MODEL"
+echo "  Backend:   $EMBEDDING_BACKEND"
+echo "  Model:     $EMBEDDING_MODEL"
 echo "  Logs:      journalctl -u paperdb -f"
 echo "  Status:    systemctl status paperdb"
 echo "  Restart:   systemctl restart paperdb"
