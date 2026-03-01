@@ -6,11 +6,13 @@ Embeddings module supporting multiple backends:
       qwen3-embedding:4b (2560d), qwen3-embedding:8b (4096d), and others
   - sbert:   sentence-transformers — supports:
       BAAI/bge-large-en-v1.5 (1024d), Qwen/Qwen3-Embedding-0.6B (1024d), etc.
+  - mlx:     MLX-native embeddings (Apple Silicon), supports model packages
+      exposed via mlx_embedding_models / mlx_embeddings.
 
 The active backend is determined by (in order):
   1. Explicit set_backend() call
   2. The 'embedding_backend' key in the settings DB
-  3. Auto-detection: tries ollama -> sbert -> openai
+  3. Auto-detection: tries ollama -> mlx -> sbert -> openai
 
 Dimensions are auto-detected from the first embedding call, or looked up
 from the KNOWN_DIMS table for common models.
@@ -19,19 +21,23 @@ from the KNOWN_DIMS table for common models.
 import os
 import numpy as np
 import requests as _requests
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 from pathlib import Path
 
 # --------------- backend state ---------------
 
-_backend = None        # 'openai' | 'ollama' | 'sbert'
+_backend = None        # 'openai' | 'ollama' | 'sbert' | 'mlx'
 _sbert_model = None    # lazy-loaded SentenceTransformer instance
+_mlx_model = None      # lazy-loaded MLX embedding model
 _openai_client = None  # lazy-loaded OpenAI client
+_ollama_session = None  # lazy-loaded requests session for keep-alive
 
 BACKEND_DEFAULTS = {
     "openai": {"model": "text-embedding-3-small", "dims": 1536},
     "ollama": {"model": "nomic-embed-text",       "dims": 768, "url": "http://localhost:11434"},
     "sbert":  {"model": "BAAI/bge-large-en-v1.5", "dims": 1024},
+    "mlx":    {"model": "BAAI/bge-small-en-v1.5", "dims": 384},
 }
 
 # Known model → default dimension mapping.
@@ -76,7 +82,7 @@ def _read_setting(key: str, default: str = "") -> str:
 def _detect_backend() -> str:
     """Auto-detect which backend is available."""
     saved = _read_setting("embedding_backend", "")
-    if saved in ("openai", "ollama", "sbert"):
+    if saved in ("openai", "ollama", "sbert", "mlx"):
         return saved
 
     # Try Ollama
@@ -86,6 +92,18 @@ def _detect_backend() -> str:
         if r.ok:
             return "ollama"
     except Exception:
+        pass
+
+    # Try MLX backends (Apple Silicon)
+    try:
+        import mlx.core  # noqa: F401
+        try:
+            import mlx_embedding_models  # noqa: F401
+            return "mlx"
+        except ImportError:
+            import mlx_embeddings  # noqa: F401
+            return "mlx"
+    except ImportError:
         pass
 
     # Try sentence-transformers
@@ -112,12 +130,14 @@ def get_backend() -> str:
 
 def set_backend(name: str):
     """Explicitly set the backend."""
-    global _backend, _sbert_model, _openai_client, _detected_dims
-    if name not in ("openai", "ollama", "sbert"):
+    global _backend, _sbert_model, _mlx_model, _openai_client, _ollama_session, _detected_dims
+    if name not in ("openai", "ollama", "sbert", "mlx"):
         raise ValueError(f"Unknown backend: {name}")
     _backend = name
     _sbert_model = None
+    _mlx_model = None
     _openai_client = None
+    _ollama_session = None
     _detected_dims = None
 
 
@@ -193,58 +213,92 @@ def _embed_openai_batch(texts: list[str]) -> list[np.ndarray]:
     return [np.array(item.embedding, dtype=np.float32) for item in resp.data]
 
 
+def _get_ollama_session():
+    global _ollama_session
+    if _ollama_session is None:
+        _ollama_session = _requests.Session()
+    return _ollama_session
+
+
+def _ollama_embed_payload(text_or_texts):
+    model = _read_setting("ollama_model", BACKEND_DEFAULTS["ollama"]["model"])
+    payload = {"model": model, "input": text_or_texts}
+    keep_alive = _read_setting("ollama_keep_alive", "")
+    if keep_alive:
+        payload["keep_alive"] = keep_alive
+    truncate = _read_setting("ollama_truncate", "")
+    if truncate.lower() in {"1", "true", "yes", "on"}:
+        payload["truncate"] = True
+    return payload
+
+
+def _ollama_post(path: str, payload: dict, timeout: int):
+    url = _read_setting("ollama_url", BACKEND_DEFAULTS["ollama"]["url"])
+    retries_raw = _read_setting("ollama_retries", "2").strip()
+    retries = int(retries_raw) if retries_raw.isdigit() else 2
+    session = _get_ollama_session()
+    last_err = None
+    for _ in range(max(1, retries + 1)):
+        try:
+            resp = session.post(f"{url}{path}", json=payload, timeout=timeout)
+            resp.raise_for_status()
+            return resp
+        except Exception as e:
+            last_err = e
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("Ollama request failed")
+
+
 # --------------- Ollama ---------------
 
 def _embed_ollama(text: str) -> np.ndarray:
-    url = _read_setting("ollama_url", BACKEND_DEFAULTS["ollama"]["url"])
-    model = _read_setting("ollama_model", BACKEND_DEFAULTS["ollama"]["model"])
     if len(text) > 30000:
         text = text[:30000]
+    single_timeout_raw = _read_setting("ollama_timeout_single", "120").strip()
+    single_timeout = int(single_timeout_raw) if single_timeout_raw.isdigit() else 120
+
     # Try newer /api/embed first (required for qwen3-embedding, supports batch)
     try:
-        resp = _requests.post(
-            f"{url}/api/embed",
-            json={"model": model, "input": text},
-            timeout=120,
-        )
-        resp.raise_for_status()
+        resp = _ollama_post("/api/embed", _ollama_embed_payload(text), timeout=single_timeout)
         data = resp.json()
         embs = data.get("embeddings", [])
         if embs:
             return np.array(embs[0], dtype=np.float32)
     except Exception:
         pass
+
     # Fall back to older /api/embeddings (for older Ollama versions)
-    resp = _requests.post(
-        f"{url}/api/embeddings",
-        json={"model": model, "prompt": text},
-        timeout=120,
-    )
-    resp.raise_for_status()
+    model = _read_setting("ollama_model", BACKEND_DEFAULTS["ollama"]["model"])
+    payload = {"model": model, "prompt": text}
+    keep_alive = _read_setting("ollama_keep_alive", "")
+    if keep_alive:
+        payload["keep_alive"] = keep_alive
+    resp = _ollama_post("/api/embeddings", payload, timeout=single_timeout)
     emb = resp.json().get("embedding", [])
     return np.array(emb, dtype=np.float32)
 
 
 def _embed_ollama_batch(texts: list[str]) -> list[np.ndarray]:
     """Batch embed via /api/embed (supports array input natively)."""
-    url = _read_setting("ollama_url", BACKEND_DEFAULTS["ollama"]["url"])
-    model = _read_setting("ollama_model", BACKEND_DEFAULTS["ollama"]["model"])
     processed = [t[:30000] for t in texts]
+    batch_timeout_raw = _read_setting("ollama_timeout_batch", "300").strip()
+    batch_timeout = int(batch_timeout_raw) if batch_timeout_raw.isdigit() else 300
     try:
-        resp = _requests.post(
-            f"{url}/api/embed",
-            json={"model": model, "input": processed},
-            timeout=300,
-        )
-        resp.raise_for_status()
+        resp = _ollama_post("/api/embed", _ollama_embed_payload(processed), timeout=batch_timeout)
         data = resp.json()
         embs = data.get("embeddings", [])
         if embs and len(embs) == len(texts):
             return [np.array(e, dtype=np.float32) for e in embs]
     except Exception:
         pass
-    # Fallback: embed one at a time
-    return [_embed_ollama(t) for t in texts]
+
+    # Fallback: parallel single-item embedding calls to reduce wall-clock time.
+    workers_raw = _read_setting("ollama_fallback_workers", "4").strip()
+    workers = int(workers_raw) if workers_raw.isdigit() else 4
+    workers = max(1, min(workers, len(processed)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(_embed_ollama, processed))
 
 
 # --------------- sentence-transformers ---------------
@@ -252,9 +306,22 @@ def _embed_ollama_batch(texts: list[str]) -> list[np.ndarray]:
 def _get_sbert_model():
     global _sbert_model
     if _sbert_model is None:
+        import torch
         from sentence_transformers import SentenceTransformer
         model_name = _read_setting("sbert_model", BACKEND_DEFAULTS["sbert"]["model"])
-        _sbert_model = SentenceTransformer(model_name)
+        preferred_device = _read_setting("sbert_device", "auto").strip().lower()
+        if preferred_device in {"cuda", "mps", "cpu"}:
+            device = preferred_device
+        elif preferred_device.startswith("cuda:"):
+            device = preferred_device
+        else:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        _sbert_model = SentenceTransformer(model_name, device=device)
     return _sbert_model
 
 
@@ -268,9 +335,76 @@ def _embed_sbert(text: str) -> np.ndarray:
 def _embed_sbert_batch(texts: list[str]) -> list[np.ndarray]:
     model = _get_sbert_model()
     processed = [t[:30000] for t in texts]
-    embs = model.encode(processed, normalize_embeddings=True,
-                        show_progress_bar=True, batch_size=32)
+    configured_batch_size = _read_setting("sbert_batch_size", "").strip()
+    if configured_batch_size.isdigit() and int(configured_batch_size) > 0:
+        batch_size = int(configured_batch_size)
+    else:
+        # Keep CPU memory stable while increasing default GPU throughput.
+        device_name = str(getattr(model, "device", "cpu"))
+        batch_size = 128 if device_name.startswith(("cuda", "mps")) else 32
+
+    embs = model.encode(
+        processed,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+        batch_size=batch_size,
+        convert_to_numpy=True,
+    )
     return [e.astype(np.float32) for e in embs]
+
+
+# --------------- MLX ---------------
+
+def _get_mlx_model():
+    global _mlx_model
+    if _mlx_model is not None:
+        return _mlx_model
+
+    model_name = _read_setting("mlx_model", BACKEND_DEFAULTS["mlx"]["model"])
+
+    # Support multiple MLX embedding package variants.
+    try:
+        from mlx_embedding_models import EmbeddingModel
+        _mlx_model = EmbeddingModel.from_registry(model_name) if hasattr(EmbeddingModel, "from_registry") else EmbeddingModel(model_name)
+        return _mlx_model
+    except Exception:
+        pass
+
+    try:
+        from mlx_embeddings import EmbeddingModel
+        _mlx_model = EmbeddingModel(model_name)
+        return _mlx_model
+    except Exception as e:
+        raise ImportError(
+            "MLX embedding backend requires mlx + mlx embedding package "
+            "(mlx_embedding_models or mlx_embeddings)."
+        ) from e
+
+
+def _mlx_encode(model, texts: list[str]):
+    if hasattr(model, "embed"):
+        return model.embed(texts)
+    if hasattr(model, "encode"):
+        return model.encode(texts)
+    if callable(model):
+        return model(texts)
+    raise ValueError("Unsupported MLX embedding model API")
+
+
+def _embed_mlx(text: str) -> np.ndarray:
+    model = _get_mlx_model()
+    if len(text) > 30000:
+        text = text[:30000]
+    out = _mlx_encode(model, [text])
+    arr = np.asarray(out[0], dtype=np.float32)
+    return arr
+
+
+def _embed_mlx_batch(texts: list[str]) -> list[np.ndarray]:
+    model = _get_mlx_model()
+    processed = [t[:30000] for t in texts]
+    out = _mlx_encode(model, processed)
+    return [np.asarray(e, dtype=np.float32) for e in out]
 
 
 # --------------- unified interface ---------------
@@ -293,6 +427,8 @@ def get_embedding(text: str, client=None) -> np.ndarray:
         emb = _embed_ollama(text)
     elif b == "sbert":
         emb = _embed_sbert(text)
+    elif b == "mlx":
+        emb = _embed_mlx(text)
     else:
         raise ValueError(f"Unknown backend: {b}")
     # Auto-detect dims from the first real call
@@ -304,6 +440,10 @@ def get_embedding(text: str, client=None) -> np.ndarray:
 def get_embeddings_batch(texts: list[str], batch_size: int = 100,
                          progress: bool = True) -> list[np.ndarray]:
     """Get embeddings for multiple texts."""
+    global _detected_dims
+    if not texts:
+        return []
+
     b = get_backend()
     if b == "openai":
         all_embs = []
@@ -312,18 +452,32 @@ def get_embeddings_batch(texts: list[str], batch_size: int = 100,
         it = _tqdm(batches, desc="Embedding") if progress else batches
         for batch in it:
             all_embs.extend(_embed_openai_batch(batch))
+        if all_embs and _detected_dims is None:
+            _detected_dims = all_embs[0].shape[0]
         return all_embs
     elif b == "ollama":
         from tqdm import tqdm as _tqdm
         all_embs = []
-        # Batch in chunks of 50 to avoid timeouts on large sets
-        batches = [texts[i:i+50] for i in range(0, len(texts), 50)]
+        batch_n_raw = _read_setting("ollama_batch_size", "64").strip()
+        batch_n = int(batch_n_raw) if batch_n_raw.isdigit() else 64
+        batch_n = max(1, batch_n)
+        batches = [texts[i:i+batch_n] for i in range(0, len(texts), batch_n)]
         it = _tqdm(batches, desc="Embedding (Ollama)") if progress else batches
         for batch in it:
             all_embs.extend(_embed_ollama_batch(batch))
+        if all_embs and _detected_dims is None:
+            _detected_dims = all_embs[0].shape[0]
         return all_embs
     elif b == "sbert":
-        return _embed_sbert_batch(texts)
+        embs = _embed_sbert_batch(texts)
+        if embs and _detected_dims is None:
+            _detected_dims = embs[0].shape[0]
+        return embs
+    elif b == "mlx":
+        embs = _embed_mlx_batch(texts)
+        if embs and _detected_dims is None:
+            _detected_dims = embs[0].shape[0]
+        return embs
     raise ValueError(f"Unknown backend: {b}")
 
 

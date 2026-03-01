@@ -25,7 +25,7 @@ from database import (
     get_papers_needing_chunks, count_chunk_stats, count_embeddings_by_dims,
 )
 from embeddings import (
-    get_embedding, get_client, create_search_text, create_paper_chunks,
+    get_embedding, get_embeddings_batch, get_client, create_search_text, create_paper_chunks,
     get_backend, set_backend, backend_info, get_embedding_dims,
 )
 from citations import fetch_citing_works, fetch_references, enrich_with_author_metrics
@@ -64,6 +64,17 @@ def _embeddings_available():
         try:
             import sentence_transformers  # noqa: F401
             return True
+        except ImportError:
+            return False
+    elif b == "mlx":
+        try:
+            import mlx.core  # noqa: F401
+            try:
+                import mlx_embedding_models  # noqa: F401
+                return True
+            except ImportError:
+                import mlx_embeddings  # noqa: F401
+                return True
         except ImportError:
             return False
     return False
@@ -474,12 +485,13 @@ def api_import_confirm():
                 if paper and (paper.get('abstract') or paper.get('title')):
                     chunk_texts = create_paper_chunks(paper)
                     if chunk_texts:
-                        chunk_rows = []
-                        faiss_pairs = []
-                        for cidx, text in chunk_texts:
-                            emb = get_embedding(text)
-                            chunk_rows.append((cidx, text, emb))
-                            faiss_pairs.append((cidx, emb))
+                        texts = [text for _, text in chunk_texts]
+                        embs = get_embeddings_batch(texts, progress=False)
+                        chunk_rows = [
+                            (cidx, text, emb)
+                            for (cidx, text), emb in zip(chunk_texts, embs)
+                        ]
+                        faiss_pairs = [(cidx, emb) for (cidx, _), emb in zip(chunk_texts, embs)]
                         insert_chunks(doi, chunk_rows)
                         # Add to FAISS index incrementally
                         try:
@@ -629,7 +641,7 @@ def api_put_settings():
     data = request.get_json(silent=True) or {}
     allowed = {"polite_email", "pdf_base_dir", "openai_api_key", "auto_embed",
                "default_doc_type", "embedding_backend", "ollama_url", "ollama_model",
-               "sbert_model", "openai_model"}
+               "sbert_model", "mlx_model", "openai_model"}
     for k, v in data.items():
         if k in allowed:
             if k == "openai_api_key" and v.startswith("sk-..."):
@@ -713,10 +725,12 @@ def api_reembed():
             continue
         try:
             delete_chunks_for_paper(paper['doi'])
-            chunk_rows = []
-            for cidx, text in chunk_texts:
-                emb = get_embedding(text)
-                chunk_rows.append((cidx, text, emb))
+            texts = [text for _, text in chunk_texts]
+            embs = get_embeddings_batch(texts, progress=False)
+            chunk_rows = [
+                (cidx, text, emb)
+                for (cidx, text), emb in zip(chunk_texts, embs)
+            ]
             insert_chunks(paper['doi'], chunk_rows)
             embedded += 1
             total_chunks += len(chunk_rows)

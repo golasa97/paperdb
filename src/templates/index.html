@@ -220,6 +220,7 @@ h1{font-size:1.8rem;font-weight:600;margin-bottom:.3rem}
     <select id="set-backend" onchange="onBackendChange()">
       <option value="ollama">Ollama (local, recommended)</option>
       <option value="sbert">sentence-transformers (local, Python)</option>
+      <option value="mlx">MLX (Apple Silicon, local)</option>
       <option value="openai">OpenAI API (cloud)</option>
     </select>
   </div>
@@ -253,6 +254,13 @@ h1{font-size:1.8rem;font-weight:600;margin-bottom:.3rem}
         <option value="Qwen/Qwen3-Embedding-8B">Qwen/Qwen3-Embedding-8B (4096d, needs GPU)</option>
       </select>
       <p style="font-size:.75rem;color:var(--muted);margin-top:.3rem">Downloaded automatically on first use. Changing models requires re-embedding.</p>
+    </div>
+  </div>
+  <div id="backend-mlx-opts" style="display:none">
+    <div class="setting-row">
+      <label>MLX Model</label>
+      <input type="text" id="set-mlx-model" placeholder="BAAI/bge-small-en-v1.5">
+      <p style="font-size:.75rem;color:var(--muted);margin-top:.3rem">Requires <code>mlx</code> plus <code>mlx_embedding_models</code> (or <code>mlx_embeddings</code>). Changing models requires re-embedding.</p>
     </div>
   </div>
   <div id="backend-openai-opts" style="display:none">
@@ -881,6 +889,7 @@ function onBackendChange(){
   const b=document.getElementById('set-backend').value;
   document.getElementById('backend-ollama-opts').style.display=b==='ollama'?'block':'none';
   document.getElementById('backend-sbert-opts').style.display=b==='sbert'?'block':'none';
+  document.getElementById('backend-mlx-opts').style.display=b==='mlx'?'block':'none';
   document.getElementById('backend-openai-opts').style.display=b==='openai'?'block':'none';
 }
 async function loadSettings(){
@@ -892,6 +901,7 @@ async function loadSettings(){
   document.getElementById('set-ollama-url').value=r.ollama_url||'http://localhost:11434';
   document.getElementById('set-ollama-model').value=r.ollama_model||'nomic-embed-text';
   document.getElementById('set-sbert-model').value=r.sbert_model||'BAAI/bge-large-en-v1.5';
+  document.getElementById('set-mlx-model').value=r.mlx_model||'BAAI/bge-small-en-v1.5';
   document.getElementById('set-openai').value=r.openai_api_key||'';
   document.getElementById('set-openai').placeholder=r.openai_api_key_set?'Key is set (enter new to replace)':'sk-...';
   document.getElementById('set-openai-model').value=r.openai_model||'text-embedding-3-small';
@@ -917,6 +927,7 @@ async function saveSettings(){
   data.ollama_url=document.getElementById('set-ollama-url').value.trim();
   data.ollama_model=document.getElementById('set-ollama-model').value.trim();
   data.sbert_model=document.getElementById('set-sbert-model').value.trim();
+  data.mlx_model=document.getElementById('set-mlx-model').value.trim();
   data.openai_model=document.getElementById('set-openai-model').value.trim();
   const k=document.getElementById('set-openai').value.trim();
   if(k&&!k.startsWith('sk-...'))data.openai_api_key=k;
