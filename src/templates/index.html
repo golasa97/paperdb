@@ -219,6 +219,7 @@ h1{font-size:1.8rem;font-weight:600;margin-bottom:.3rem}
     <label>Backend</label>
     <select id="set-backend" onchange="onBackendChange()">
       <option value="ollama">Ollama (local, recommended)</option>
+      <option value="mlx">MLX (local, Apple Silicon)</option>
       <option value="sbert">sentence-transformers (local, Python)</option>
       <option value="openai">OpenAI API (cloud)</option>
     </select>
@@ -240,6 +241,17 @@ h1{font-size:1.8rem;font-weight:600;margin-bottom:.3rem}
         <option value="all-minilm">all-minilm (384d, 46MB, tiny/fast)</option>
       </select>
       <p style="font-size:.75rem;color:var(--muted);margin-top:.3rem">Pull with: <code>ollama pull &lt;model-name&gt;</code>. Changing models requires re-embedding.</p>
+    </div>
+  </div>
+  <div id="backend-mlx-opts" style="display:none">
+    <div class="setting-row">
+      <label>MLX Model</label>
+      <select id="set-mlx-model">
+        <option value="mlx-community/bge-small-en-v1.5-4bit">mlx-community/bge-small-en-v1.5-4bit (384d, fastest)</option>
+        <option value="mlx-community/bge-base-en-v1.5-4bit">mlx-community/bge-base-en-v1.5-4bit (768d)</option>
+        <option value="mlx-community/bge-large-en-v1.5-4bit">mlx-community/bge-large-en-v1.5-4bit (1024d, best quality)</option>
+      </select>
+      <p style="font-size:.75rem;color:var(--muted);margin-top:.3rem">Install first: <code>pip install mlx mlx-embeddings</code>. Best on Apple Silicon. Changing models requires re-embedding.</p>
     </div>
   </div>
   <div id="backend-sbert-opts" style="display:none">
@@ -880,6 +892,7 @@ async function doCensusIngest(){
 function onBackendChange(){
   const b=document.getElementById('set-backend').value;
   document.getElementById('backend-ollama-opts').style.display=b==='ollama'?'block':'none';
+  document.getElementById('backend-mlx-opts').style.display=b==='mlx'?'block':'none';
   document.getElementById('backend-sbert-opts').style.display=b==='sbert'?'block':'none';
   document.getElementById('backend-openai-opts').style.display=b==='openai'?'block':'none';
 }
@@ -891,6 +904,7 @@ async function loadSettings(){
   onBackendChange();
   document.getElementById('set-ollama-url').value=r.ollama_url||'http://localhost:11434';
   document.getElementById('set-ollama-model').value=r.ollama_model||'nomic-embed-text';
+  document.getElementById('set-mlx-model').value=r.mlx_model||'mlx-community/bge-small-en-v1.5-4bit';
   document.getElementById('set-sbert-model').value=r.sbert_model||'BAAI/bge-large-en-v1.5';
   document.getElementById('set-openai').value=r.openai_api_key||'';
   document.getElementById('set-openai').placeholder=r.openai_api_key_set?'Key is set (enter new to replace)':'sk-...';
@@ -916,6 +930,7 @@ async function saveSettings(){
   data.embedding_backend=document.getElementById('set-backend').value;
   data.ollama_url=document.getElementById('set-ollama-url').value.trim();
   data.ollama_model=document.getElementById('set-ollama-model').value.trim();
+  data.mlx_model=document.getElementById('set-mlx-model').value.trim();
   data.sbert_model=document.getElementById('set-sbert-model').value.trim();
   data.openai_model=document.getElementById('set-openai-model').value.trim();
   const k=document.getElementById('set-openai').value.trim();
