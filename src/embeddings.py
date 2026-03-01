@@ -63,6 +63,9 @@ KNOWN_DIMS = {
     "mlx-community/bge-small-en-v1.5-4bit": 384,
     "mlx-community/bge-base-en-v1.5-4bit": 768,
     "mlx-community/bge-large-en-v1.5-4bit": 1024,
+    "mlx-community/Qwen3-Embedding-0.6B-4bit": 1024,
+    "mlx-community/Qwen3-Embedding-4B-4bit": 2560,
+    "mlx-community/Qwen3-Embedding-8B-4bit": 4096,
     # OpenAI models
     "text-embedding-3-small":    1536,
     "text-embedding-3-large":    3072,
